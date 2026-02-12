@@ -517,6 +517,8 @@ def _replicate_delta_anchor_consistency_loss(
 ) -> torch.Tensor:
     """
     Stage-2 replicate agreement on Δ_anchor = (z_out - anchor).
+    Uses L2 distance instead of cosine similarity to avoid numerically
+    undefined gradients on near-zero delta vectors (stable proteins).
     NOTE: with the updated architecture, model(..., anchors=...) returns deltas[m] = Δ_anchor directly.
     """
     if not replicate_groups:
@@ -551,7 +553,7 @@ def _replicate_delta_anchor_consistency_loss(
             mr = m_stack[r] & valid
             if mr.sum() == 0:
                 continue
-            total = total + torch.mean(1.0 - F.cosine_similarity(d_stack[r][mr], d_mean[mr], dim=1))
+            total = total + (d_stack[r][mr] - d_mean[mr]).pow(2).sum(dim=1).mean()
             n_terms += 1
 
     if n_terms == 0:
@@ -916,7 +918,7 @@ def fit_predict(
     lambda_replicate: float = 0.0,
     lambda_recon: float = 1.0,
     lambda_triplet: float = 1.0,
-    triplet_margin: float = 1.0,
+    triplet_margin: float = 0.25,
     modality_balance: str = "on",  # "on" | "off"
     quality_weight_mode: str = "auto",  # "auto" | "off"
     quality_floor: float = 0.1,
@@ -987,6 +989,7 @@ def fit_predict(
             _qw.writerow([b, f"{quality_w[b]:.6f}"])
 
     optimizer = optim.Adam(model.parameters(), lr=learn_rate, weight_decay=weight_decay)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=int(n_epochs))
 
     protein_dataset = Protein_Dataset(modalities_dict)
     train_loader = DataLoader(protein_dataset, batch_size=batch_size, 
@@ -1093,6 +1096,7 @@ def fit_predict(
 
             optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             epoch_losses.append(loss.item())
@@ -1100,12 +1104,15 @@ def fit_predict(
             epoch_trip.append(trip_loss.item())
             epoch_rep.append(rep_loss.item())
 
+        scheduler.step()
+
         log_entry = {
             "epoch": epoch,
             "loss": float(np.mean(epoch_losses) if epoch_losses else np.nan),
             "recon": float(np.mean(epoch_recon) if epoch_recon else np.nan),
             "triplet": float(np.mean(epoch_trip) if epoch_trip else np.nan),
             "replicate": float(np.mean(epoch_rep) if epoch_rep else np.nan),
+            "lr": float(optimizer.param_groups[0]["lr"]),
         }
         for b in sorted(quality_w.keys()):
             log_entry[f"qw_{b}"] = quality_w[b]
@@ -1780,6 +1787,7 @@ def fit_treated_adapter(
 
             optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             # logging

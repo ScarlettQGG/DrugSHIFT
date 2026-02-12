@@ -100,6 +100,7 @@ def run_two_stage(
     lambda_replicate_static: float = 0.0,
     lambda_recon_static: float = 1.0,
     lambda_triplet: float = 1.0,
+    triplet_margin: float = 0.25,
     modality_balance: str = "on",
     quality_weight_mode: str = "auto",
     quality_floor: float = 0.1,
@@ -178,6 +179,7 @@ def run_two_stage(
         n_epochs=epochs_static,
         batch_size=batch_size,
         lambda_triplet=lambda_triplet,
+        triplet_margin=triplet_margin,
         lambda_recon=lambda_recon_static,
         dropout=dropout,
         l2_norm=l2_norm,
@@ -328,6 +330,8 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--lambda_replicate_static", type=float, default=0.75)
     p.add_argument("--lambda_recon_static", type=float, default=0.9)
     p.add_argument("--lambda_triplet", type=float, default=0.8)
+    p.add_argument("--triplet_margin", type=float, default=0.25,
+               help="Stage1: triplet loss margin in cosine distance space (default 0.25).")
     p.add_argument("--modality_balance", default="on", choices=["on", "off"],
                help="Stage1: if off, sample triplet pairs uniformly and do not weight by modality dissimilarity.")
     p.add_argument("--quality_weight_mode", default="auto", choices=["auto", "off"],
@@ -442,6 +446,7 @@ def main():
         lambda_replicate_static=args.lambda_replicate_static,
         lambda_recon_static=args.lambda_recon_static,
         lambda_triplet=args.lambda_triplet,
+        triplet_margin=args.triplet_margin,
         adapter_bottleneck=args.adapter_bottleneck,
         lambda_recon=args.lambda_recon,
         lambda_rep=args.lambda_rep,
