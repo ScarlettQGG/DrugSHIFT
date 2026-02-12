@@ -1257,6 +1257,11 @@ def fit_treated_adapter(
         if model.adapter_gate.requires_grad:
             groups.append({"params": [model.adapter_gate], "lr": float(learn_rate), "weight_decay": 0.0})
 
+        # recon head params
+        rh_params = [p for p in model.recon_heads.parameters() if p.requires_grad]
+        if rh_params:
+            groups.append({"params": rh_params, "lr": float(learn_rate), "weight_decay": float(weight_decay)})
+
         # aligner params
         aps = _collect_aligner_params(model, secms_base)
         if aps:
@@ -1383,6 +1388,7 @@ def fit_treated_adapter(
             model.set_condition(None)
             _set_trainable_adapter(model, condition_name, False)
             _set_trainable_gate(model, False)
+            model.set_recon_heads_trainable(False)
 
             # default: disable/freeze both
             model.enable_only_these_aligners([])
@@ -1405,6 +1411,7 @@ def fit_treated_adapter(
             model.set_condition(str(condition_name))
             _set_trainable_adapter(model, condition_name, True)
             _set_trainable_gate(model, True)
+            model.set_recon_heads_trainable(True)
 
             # keep phase1 transforms ACTIVE but FROZEN
             if use_aligner_in_phase1:
@@ -1524,8 +1531,8 @@ def fit_treated_adapter(
         if phase == "phase2":
             warm_recon_end   = int(0.10 * p2_total)
             warm_anchor_end  = int(0.40 * p2_total)
-            warm_sparse_s    = int(0.30 * p2_total)
-            warm_sparse_e    = int(0.70 * p2_total)
+            warm_sparse_s    = int(0.50 * p2_total)
+            warm_sparse_e    = int(0.80 * p2_total)
             sched_epoch = p2_epoch
             sched_total = p2_total
         else:
@@ -1639,12 +1646,18 @@ def fit_treated_adapter(
                 anchor_ctr["anchored"] += int((present_any & anchor_mask_batch).sum().item())
 
             # (1) Recon on treated SEC-MS (self)
+            # Phase 2 uses the trainable recon heads (satisfiable signal);
+            # Phase 1 falls back to the frozen decoder cross-reconstruction.
             recon_terms = []
             for r in treated_secms_names:
                 m = batch_mask[r].bool()
                 if m.sum() == 0:
                     continue
-                y_hat = outputs[f"{r}_{r}"][m]
+                if phase == "phase2":
+                    base = model._base_of.get(r, r)
+                    y_hat = model.recon_heads[base](latents[r][m])
+                else:
+                    y_hat = outputs[f"{r}_{r}"][m]
                 y = batch_data[r][m]
                 recon_terms.append(1.0 - F.cosine_similarity(y_hat, y, dim=1))
             recon_loss = torch.mean(torch.cat(recon_terms)) if recon_terms else torch.tensor(0.0, device=device)

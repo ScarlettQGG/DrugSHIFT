@@ -272,7 +272,7 @@ class UniEmbedNN(nn.Module):
         conditions: Optional[Iterable[str]] = None,
         adapter_bottleneck: int = 64,
         # ---- Adapter behavior knobs (Stage-2) ----
-        adapter_gate_init: float = 0.05,        # small => adapter starts near off
+        adapter_gate_init: float = 0.3,         # moderate => adapter can bootstrap
         adapter_center_input: bool = True,      # remove common-mode before adapter
         adapter_center_output: bool = True,     # remove common-mode after adapter
         # ---- MoE knobs ----
@@ -366,6 +366,25 @@ class UniEmbedNN(nn.Module):
         self.adapter_center_input = bool(adapter_center_input)
         self.adapter_center_output = bool(adapter_center_output)
 
+        # ---- Trainable reconstruction heads (Phase-2) ----
+        # Lightweight MLP per adapted base: latent → input space.
+        # Unlike the frozen decoder, this head CAN learn to map treated
+        # latents to treated SEC-MS profiles, providing a satisfiable
+        # reconstruction signal that prevents embedding collapse to anchor.
+        self.recon_heads = nn.ModuleDict()
+        adapted_bases_seen: Set[str] = set()
+        for m in self.adapted_modalities:
+            base = self._base_of.get(m, m)
+            if base in adapted_bases_seen:
+                continue
+            adapted_bases_seen.add(base)
+            in_dim = int(base_input_dims[base])
+            self.recon_heads[base] = nn.Sequential(
+                nn.Linear(self.latent_dim, self.hidden_size_2),
+                nn.ReLU(),
+                nn.Linear(self.hidden_size_2, in_dim),
+            )
+
     def set_condition(self, condition: Optional[str]) -> None:
         self._condition = condition
     
@@ -445,6 +464,11 @@ class UniEmbedNN(nn.Module):
     def set_gate_trainable(self, flag: bool = True) -> None:
         """Toggle trainability of the scalar adapter gate."""
         self.adapter_gate.requires_grad_(bool(flag))
+
+    def set_recon_heads_trainable(self, flag: bool = True) -> None:
+        """Toggle trainability of the reconstruction projection heads."""
+        for p in self.recon_heads.parameters():
+            p.requires_grad_(bool(flag))
 
     def forward(
         self,
