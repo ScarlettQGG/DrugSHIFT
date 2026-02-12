@@ -101,6 +101,9 @@ def run_two_stage(
     lambda_recon_static: float = 1.0,
     lambda_triplet: float = 1.0,
     modality_balance: str = "on",
+    quality_weight_mode: str = "auto",
+    quality_floor: float = 0.1,
+    quality_exponent: float = 1.0,
     # ---- Stage 2 ----
     adapter_bottleneck: int = 64,
     lambda_recon: float = 1.0,
@@ -180,6 +183,9 @@ def run_two_stage(
         save_update_epochs=False,
         replicate_groups=rep_groups if rep_groups else None,
         lambda_replicate=lambda_replicate_static,
+        quality_weight_mode=quality_weight_mode,
+        quality_floor=quality_floor,
+        quality_exponent=quality_exponent,
     ):
         pass
 
@@ -322,6 +328,12 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--lambda_triplet", type=float, default=0.8)
     p.add_argument("--modality_balance", default="on", choices=["on", "off"],
                help="Stage1: if off, sample triplet pairs uniformly and do not weight by modality dissimilarity.")
+    p.add_argument("--quality_weight_mode", default="auto", choices=["auto", "off"],
+               help="Stage1: if auto, down-weight low-discriminability modalities (e.g. SEC-MS with high pairwise similarity).")
+    p.add_argument("--quality_floor", type=float, default=0.1,
+               help="Stage1: minimum quality weight for any modality (prevents total silencing).")
+    p.add_argument("--quality_exponent", type=float, default=1.0,
+               help="Stage1: exponent applied to (1 - mean_cosine_sim) when computing quality weights.")
 
 
     # Stage 2
@@ -407,6 +419,9 @@ def main():
         learn_rate_adapter=args.learn_rate_adapter,
         weight_decay_adapter=args.weight_decay_adapter,
         modality_balance=args.modality_balance if hasattr(args, "modality_balance") else "on",
+        quality_weight_mode=args.quality_weight_mode,
+        quality_floor=args.quality_floor,
+        quality_exponent=args.quality_exponent,
         stable_list_mode=args.stable_list_mode,
         two_phase=args.two_phase,
         phase1_lambda_anchor=args.phase1_lambda_anchor,

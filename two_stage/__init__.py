@@ -172,6 +172,82 @@ def _collate_protein_batch(batch):
     batch_mask = {m: torch.tensor([md.get(m, 0.0) for md in mask_dicts], dtype=torch.float32) for m in modalities}
     return batch_data, batch_mask, list(idxs)
 
+def compute_modality_quality_weights(
+    modalities_dict: Dict[str, Dict[str, np.ndarray]],
+    base_of: Dict[str, str],
+    max_proteins: int = 2000,
+    n_pairs: int = 50000,
+    seed: int = 0,
+    floor: float = 0.1,
+    exponent: float = 1.0,
+    eps: float = 1e-8,
+) -> Dict[str, float]:
+    """
+    Per-base modality quality weight based on pairwise discriminability.
+
+    Modalities where most protein pairs have high cosine similarity (low
+    discriminative power) receive a lower weight.  This prevents noisy or
+    low-information modalities (e.g. SEC-MS with a high similarity floor)
+    from dominating the co-embedding during Stage 1 integration.
+
+    quality_raw = (1 - mean_pairwise_cosine) ^ exponent, floored at *floor*,
+    then rescaled so that the most discriminative modality gets weight 1.0.
+    """
+    rng = np.random.RandomState(seed)
+
+    # group streams by base modality
+    base_to_streams: Dict[str, List[str]] = defaultdict(list)
+    for m in modalities_dict.keys():
+        base_to_streams[base_of.get(m, m)].append(m)
+
+    raw_quality: Dict[str, float] = {}
+
+    for base, streams in base_to_streams.items():
+        # collect per-protein vectors (mean across replicate streams)
+        pvecs: Dict[str, List[np.ndarray]] = {}
+        for stream in streams:
+            for p, v in modalities_dict[stream].items():
+                pvecs.setdefault(p, []).append(np.asarray(v, dtype=np.float32))
+
+        proteins = sorted(pvecs.keys())
+        if len(proteins) < 2:
+            raw_quality[base] = 1.0
+            continue
+
+        if len(proteins) > max_proteins:
+            proteins = rng.choice(proteins, size=max_proteins, replace=False).tolist()
+
+        X = np.stack([np.mean(pvecs[p], axis=0) for p in proteins], axis=0)  # [N, D]
+
+        # L2 normalise
+        norms = np.linalg.norm(X, axis=1, keepdims=True)
+        X = X / np.maximum(norms, eps)
+
+        N = len(proteins)
+        if N <= 500:
+            # full pairwise matrix is feasible
+            S = X @ X.T
+            sims = S[np.triu_indices(N, k=1)]
+        else:
+            # sample random pairs
+            n_actual = min(n_pairs, N * (N - 1) // 2)
+            i_idx = rng.randint(0, N, size=n_actual)
+            j_idx = rng.randint(0, N - 1, size=n_actual)
+            j_idx[j_idx >= i_idx] += 1  # ensure i != j
+            sims = np.sum(X[i_idx] * X[j_idx], axis=1)
+
+        mean_sim = float(np.mean(sims))
+        quality = max(float(floor), (1.0 - mean_sim) ** float(exponent))
+        raw_quality[base] = quality
+
+    # rescale so max weight = 1.0
+    max_q = max(raw_quality.values()) if raw_quality else 1.0
+    if max_q <= 0:
+        max_q = 1.0
+
+    return {b: q / max_q for b, q in raw_quality.items()}
+
+
 def compute_base_similarity_projected(
     modalities_dict: Dict[str, Dict[str, np.ndarray]],
     base_of: Dict[str, str],
@@ -682,6 +758,7 @@ def save_results(
     protein_dataset: Protein_Dataset,
     data_wrapper: TrainingDataWrapper,
     results_suffix: str = "",
+    quality_weights: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Dict[str, np.ndarray]]:
     """
     Save per-modality latent TSVs only for proteins that are PRESENT in that modality
@@ -728,7 +805,7 @@ def save_results(
         out = f"{data_wrapper.resultsdir}_{m}{results_suffix}_latent.tsv"
         write_embedding_dictionary_to_file(out, d, data_wrapper.latent_dim)
 
-    # compute co-embedding: mean across PRESENT bases only
+    # compute co-embedding: quality-weighted mean across PRESENT bases
     coembed: Dict[str, np.ndarray] = {}
     for pname, md in per_protein_latents.items():
         if not md:
@@ -739,9 +816,15 @@ def save_results(
             base = model._base_of.get(name, name)
             base_to_vecs[base].append(z)
 
-        # average within each base, then average across bases (bases present for this protein)
-        base_means = [np.mean(vs, axis=0) for vs in base_to_vecs.values()]
-        coembed[pname] = np.mean(base_means, axis=0)
+        # average within each base, then quality-weighted average across bases
+        base_means = []
+        base_w = []
+        for base, vs in base_to_vecs.items():
+            base_means.append(np.mean(vs, axis=0))
+            base_w.append(quality_weights.get(base, 1.0) if quality_weights else 1.0)
+        base_w = np.array(base_w, dtype=np.float64)
+        base_w = base_w / (base_w.sum() + 1e-12)
+        coembed[pname] = np.average(base_means, axis=0, weights=base_w)
 
     out_co = f"{data_wrapper.resultsdir}{results_suffix}_latent.tsv"
     write_embedding_dictionary_to_file(out_co, coembed, data_wrapper.latent_dim)
@@ -775,6 +858,9 @@ def fit_predict(
     lambda_triplet: float = 1.0,
     triplet_margin: float = 1.0,
     modality_balance: str = "on",  # "on" | "off"
+    quality_weight_mode: str = "auto",  # "auto" | "off"
+    quality_floor: float = 0.1,
+    quality_exponent: float = 1.0,
 ) -> Iterator[List[Union[str, float]]]:
 
     modality_names = list(modalities_dict.keys())
@@ -814,7 +900,30 @@ def fit_predict(
     def dissim(a, b, floor=0.05):
         # 1 - similarity, with a floor so we don't zero anything out
         return max(floor, (1.0 - float(base_sim.get(a, {}).get(b, 0.0)))**2)
-    
+
+    # ---- Modality quality weights ----
+    if str(quality_weight_mode).lower() == "auto":
+        quality_w = compute_modality_quality_weights(
+            modalities_dict, model._base_of,
+            floor=float(quality_floor),
+            exponent=float(quality_exponent),
+        )
+    else:
+        quality_w = {b: 1.0 for b in model._unique_bases}
+
+    print(f"[Quality weights] mode={quality_weight_mode}")
+    for b in sorted(quality_w.keys()):
+        print(f"  {b}: {quality_w[b]:.4f}")
+
+    # save quality weights to TSV for inspection
+    qw_path = f"{resultsdir}_quality_weights.tsv"
+    os.makedirs(os.path.dirname(qw_path) or ".", exist_ok=True)
+    with open(qw_path, "w", newline="") as _qf:
+        _qw = csv.writer(_qf, delimiter="\t")
+        _qw.writerow(["base_modality", "quality_weight"])
+        for b in sorted(quality_w.keys()):
+            _qw.writerow([b, f"{quality_w[b]:.6f}"])
+
     optimizer = optim.Adam(model.parameters(), lr=learn_rate, weight_decay=weight_decay)
 
     protein_dataset = Protein_Dataset(modalities_dict)
@@ -848,7 +957,9 @@ def fit_predict(
             base_keys = list(base_latents.keys())
 
             # (1) Cross-modality reconstruction in input space using base decoders
+            #     Weighted by modality quality so noisy modalities contribute less.
             pair_losses = []
+            pair_qw = []
             for in_base in base_keys:
                 z = base_latents[in_base]
                 for out_base in base_keys:
@@ -858,8 +969,16 @@ def fit_predict(
                     y_hat = model.decoders[out_base](z[mask])
                     y = base_inputs[out_base][mask]
                     pair_losses.append((1.0 - F.cosine_similarity(y_hat, y, dim=1)).mean())
+                    pair_qw.append(math.sqrt(quality_w.get(in_base, 1.0)
+                                             * quality_w.get(out_base, 1.0)))
 
-            recon_loss = torch.stack(pair_losses).mean() if pair_losses else torch.tensor(0.0, device=device)
+            if pair_losses:
+                pair_losses_t = torch.stack(pair_losses)
+                pair_qw_t = torch.tensor(pair_qw, device=device, dtype=torch.float32)
+                pair_qw_t = pair_qw_t / (pair_qw_t.sum() + 1e-12)
+                recon_loss = (pair_losses_t * pair_qw_t).sum()
+            else:
+                recon_loss = torch.tensor(0.0, device=device)
 
 
             # (2) Triplet across bases
@@ -898,7 +1017,9 @@ def fit_predict(
                 neg_d = 1.0 - F.cosine_similarity(a, n, dim=1)
 
                 trip = torch.clamp(pos_d - neg_d + float(triplet_margin), min=0.0)
-                trip_terms.append(w_ab * trip)
+                w_q = math.sqrt(quality_w.get(anchor_base, 1.0)
+                                * quality_w.get(pos_base, 1.0))
+                trip_terms.append(w_ab * w_q * trip)
 
             trip_loss = torch.mean(torch.cat(trip_terms)) if trip_terms else torch.tensor(0.0, device=device)
 
@@ -917,19 +1038,24 @@ def fit_predict(
             epoch_trip.append(trip_loss.item())
             epoch_rep.append(rep_loss.item())
 
-        losses_log.append({
+        log_entry = {
             "epoch": epoch,
             "loss": float(np.mean(epoch_losses) if epoch_losses else np.nan),
             "recon": float(np.mean(epoch_recon) if epoch_recon else np.nan),
             "triplet": float(np.mean(epoch_trip) if epoch_trip else np.nan),
             "replicate": float(np.mean(epoch_rep) if epoch_rep else np.nan),
-        })
+        }
+        for b in sorted(quality_w.keys()):
+            log_entry[f"qw_{b}"] = quality_w[b]
+        losses_log.append(log_entry)
 
         if save_update_epochs and (epoch % int(save_epoch) == 0) and epoch > 0:
-            save_results(model, protein_dataset, dw, results_suffix=f"_epoch{epoch}")
+            save_results(model, protein_dataset, dw, results_suffix=f"_epoch{epoch}",
+                         quality_weights=quality_w)
 
     _save_losses(f"{resultsdir}_loss.tsv", losses_log)
-    per_protein_latents = save_results(model, protein_dataset, dw)
+    per_protein_latents = save_results(model, protein_dataset, dw,
+                                       quality_weights=quality_w)
 
     for pname in sorted(per_protein_latents.keys()):
         md = per_protein_latents[pname]
@@ -937,8 +1063,14 @@ def fit_predict(
         for name, z in md.items():
             base = model._base_of.get(name, name)
             base_to_vecs[base].append(z)
-        base_means = [np.mean(vs, axis=0) for vs in base_to_vecs.values()]
-        z = np.mean(base_means, axis=0)
+        bm = []
+        bw = []
+        for base, vs in base_to_vecs.items():
+            bm.append(np.mean(vs, axis=0))
+            bw.append(quality_w.get(base, 1.0))
+        bw = np.array(bw, dtype=np.float64)
+        bw = bw / (bw.sum() + 1e-12)
+        z = np.average(bm, axis=0, weights=bw)
         yield [pname] + list(map(float, z.tolist()))
 
 
