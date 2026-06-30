@@ -1,0 +1,27 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.so
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Model artefacts & data (never commit large binaries / datasets)
+*.pth
+*.pt
+*.tsv
+*.npy
+*.npz
+*.graphml
+output/
+outputs/
+runs/
+*.log
+
+# Environments
+.venv/
+venv/
+env/

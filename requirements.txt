@@ -1,0 +1,14 @@
+# Core (tested with these versions; newer minors should work)
+numpy>=1.24,<2.0
+pandas>=2.0
+scikit-learn>=1.2
+scipy>=1.10
+torch>=2.0
+
+# direction_modules.py — GO:BP enrichment via the Enrichr/speedrichr REST API
+requests>=2.28
+
+# Optional — Leiden community detection for cluster-aware kNN.
+# If absent, muse_stage1.pseudo_labels falls back to KMeans automatically.
+python-igraph>=0.10
+leidenalg>=0.9
