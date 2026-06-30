@@ -28,11 +28,11 @@ sigma2_pred) and its Stage 1 cache, runs four biology-facing evaluations:
             ‖δ‖ low,  coh low   →  no remodelling
 
 Run:
-    python -m two_stage_v3.eval \\
-        --adapter_dir   out_final2/stage2_v3/adapter_cisplatin \\
-        --inference_dir out_final2/stage2_v3/inference_cisplatin \\
+    python -m two_stage.stage2.eval \\
+        --adapter_dir   output/stage2/adapter_cisplatin \\
+        --inference_dir output/stage2/inference_cisplatin \\
         --corum         corum_humanComplexes0125.txt \\
-        --outdir        out_final2/stage2_v3/eval_cisplatin
+        --outdir        output/stage2/eval_cisplatin
 """
 from __future__ import annotations
 from typing import Dict, List, Optional, Tuple

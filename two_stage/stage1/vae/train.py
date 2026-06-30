@@ -28,12 +28,12 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 # Reuse v1 utilities
-from muse_stage1.dropout import apply_dropout, random_modality_dropout
-from muse_stage1.train import (
+from ..dropout import apply_dropout, random_modality_dropout
+from ..train import (
     load_modality_matrices, build_universe, assemble_tensors,
     build_pseudo_label_tensor, MUSEDataset, collate, _write_tsv,
 )
-from muse_stage1.pseudo_labels import compute_all_pseudo_labels
+from ..pseudo_labels import compute_all_pseudo_labels
 
 from .model import make_vae_model
 from .losses import total_loss_vae

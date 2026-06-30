@@ -2,9 +2,9 @@
 """CLI for MUSE Stage-1 v2 (VAE).
 
 Example:
-    python -m muse_stage1_vae.runner \\
+    python -m two_stage.stage1.vae.runner \\
         --manifest ./input_secms_6074/manifest.json \\
-        --outdir   ./out_final2/muse_stage1_vae_v1 \\
+        --outdir   ./output/stage1_vae \\
         --beta 0.1  --beta_warmup_epochs 30 \\
         --joint_dim 256 --n_epochs 300
 """

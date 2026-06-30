@@ -112,8 +112,8 @@ top the list depends on the knobs.
 
 ## 8. Reproduce the principled run
 ```bash
-python -m two_stage_v3.training_v3 \
-  --stage1_outdir output/muse_stage1_v6sig0.5_v3compat \
+python -m two_stage.stage2.training \
+  --stage1_outdir output/stage1 \
   --manifest input_secms_6074/manifest.json --epic_name epic \
   --condition cisplatin --cond_names cisplatin vorinostat negative_ctrl \
   --sigma2_epic_path input_secms_6074/sigma2_epic_empirical.tsv \

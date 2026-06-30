@@ -2,9 +2,9 @@
 """CLI for MUSE-style Stage 1.
 
 Example:
-    python -m muse_stage1.runner \
+    python -m two_stage.stage1.runner \
         --manifest ./input_secms_6074/manifest.json \
-        --outdir   ./out_final2/muse_stage1_v1 \
+        --outdir   ./output/stage1 \
         --joint_dim 256 \
         --n_epochs 300 \
         --batch_size 256 \

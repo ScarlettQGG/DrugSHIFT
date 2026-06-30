@@ -1,4 +1,4 @@
-"""muse_stage1 — MUSE-style Stage-1 multimodal anchor for the two-stage co-embedding pipeline.
+"""Stage 1 — MUSE-style Stage-1 multimodal anchor for the two-stage co-embedding pipeline.
 
 Key differences vs. the existing Stage 1:
   * Joint latent z is a LEARNED fusion of per-modality latents (concat + MLP),

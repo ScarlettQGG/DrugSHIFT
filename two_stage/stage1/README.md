@@ -1,10 +1,10 @@
-# `muse_stage1` — MUSE-style Stage 1 with semi-hard negatives
+# Stage 1 — MUSE-style multimodal map (with semi-hard negatives)
 
 A drop-in alternative Stage-1 multimodal anchor for the two-stage co-embedding pipeline. Produces `static_latent.tsv` in the same format as the existing Stage 1, so downstream Stage 2 / hierarchy code consumes it unchanged.
 
 ## What's different vs. the existing Stage 1
 
-| | Existing Stage 1 | `muse_stage1` |
+| | Paper Stage 1 | this `stage1` |
 |---|---|---|
 | Joint anchor | **Mean** of L2-normed per-modality latents (lossy) | **Learned fusion** (concat with mask bits → MLP → joint z) |
 | Reconstruction | Cross-modal recon from per-modality latents | Recon from joint z, per modality (forces z to retain every modality) |
@@ -42,9 +42,9 @@ A drop-in alternative Stage-1 multimodal anchor for the two-stage co-embedding p
 ## Run
 
 ```bash
-python -m muse_stage1.runner \
-    --manifest ./input_secms_6074/manifest.json \
-    --outdir   ./out_final2/muse_stage1_v1 \
+python -m two_stage.stage1.runner \
+    --manifest ./input/manifest.json \
+    --outdir   ./output/stage1 \
     --joint_dim 256 \
     --n_epochs 300 \
     --batch_size 256 \

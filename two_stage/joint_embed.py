@@ -1,5 +1,5 @@
 """
-joint_embed_v6.py
+joint_embed.py
 =================
 GNN-based joint embedding for EPIC PPI graphs (replaces the Word2Vec
 pipeline used in v1-v4).
@@ -44,9 +44,9 @@ Outputs match v3/v4 layout so the existing eval_output2 pipeline works:
 
 Usage
 -----
-    python joint_embed_v6.py \
-        --base /cellar/users/geqian/projects/co-elution/0824_analysis \
-        --outdir /cellar/.../new_coemb/EPIC_Mutilayer/joint_embed_v6_outputs/cutoff_0.7 \
+    python -m two_stage.joint_embed \
+        --base /path/to/analysis_base \
+        --outdir output/joint_embed/cutoff_0.7 \
         --cutoff 0.7 \
         --epochs 300 \
         --d-out 128
@@ -83,8 +83,8 @@ Edge = Tuple[str, str]
 EdgeScores = Dict[Edge, float]
 
 DEFAULT_BASE_CANDIDATES = [
-    Path("/Volumes/geqian/projects/co-elution/0824_analysis"),
-    Path("/cellar/users/geqian/projects/co-elution/0824_analysis"),
+    Path("./data/analysis_base"),
+    Path("/path/to/analysis_base"),
 ]
 
 
@@ -1311,7 +1311,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="Edge score cutoff: only edges with score > cutoff are kept (use --inclusive-cutoff for >=).")
     parser.add_argument("--inclusive-cutoff", action="store_true")
     parser.add_argument("--outdir", type=Path,
-                        default=Path("joint_embed_v6_outputs/cutoff_0.7"))
+                        default=Path("output/joint_embed/cutoff_0.7"))
 
     # model architecture
     parser.add_argument("--d-in", type=int, default=64,
@@ -1398,7 +1398,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args.outdir.mkdir(parents=True, exist_ok=True)
 
     print("=" * 78)
-    print("joint_embed_v6: shared-parameter GNN encoder for EPIC PPI graphs")
+    print("joint_embed: shared-parameter GNN encoder for EPIC PPI graphs")
     print("=" * 78)
     print(f"  base:         {args.base}")
     print(f"  outdir:       {args.outdir}")

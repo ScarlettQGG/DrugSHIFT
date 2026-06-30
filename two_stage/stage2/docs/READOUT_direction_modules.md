@@ -25,7 +25,7 @@ Intra-module direction cosine 0.86–0.96 (tightly coordinated).
 It needs the negative-control inference (for the confident threshold), so it is a
 post-`eval` step rather than inside `eval.py`:
 ```bash
-python -m two_stage_v3.direction_modules \
+python -m two_stage.stage2.direction_modules \
   --stage1_latent <stage1>/static_latent.tsv \
   --neg_latent    <out>/inference_negCTRL/z_treat.tsv \
   --drug cisplatin=<out>/inference_cisplatin \

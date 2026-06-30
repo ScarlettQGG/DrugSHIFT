@@ -7,7 +7,7 @@ Components:
              Aggregated as Σ_m β_m · L_KL_m with β_m provided externally
              (so the runner can warm-up / sweep β per modality).
   L_struct   Same Kendall-weighted within-modality semi-hard triplet as v1.
-             Imported from muse_stage1.losses to avoid duplication.
+             Imported from two_stage.stage1.losses to avoid duplication.
 """
 from __future__ import annotations
 from typing import Dict, Optional, Tuple
@@ -17,7 +17,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 # Reuse the v1 structure-triplet implementation (same algorithm).
-from muse_stage1.losses import structure_triplet_loss
+from ..losses import structure_triplet_loss
 
 
 # ───────────────────────────────────────────────────────────────────────────

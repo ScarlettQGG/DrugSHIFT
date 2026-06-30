@@ -12,7 +12,7 @@ import torch.nn.functional as F
 
 class _MLP(nn.Module):
     """Compact 2-layer MLP — always includes Dropout layer so state_dict
-    indices are stable across dropout values (see two_stage_v3 architecture
+    indices are stable across dropout values (see two_stage.stage2 architecture
     discussion)."""
     def __init__(self, in_dim: int, hidden: int, out_dim: int,
                  dropout: float = 0.0,

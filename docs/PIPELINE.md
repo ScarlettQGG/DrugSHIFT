@@ -22,7 +22,7 @@ The modalities used in the worked example:
 
 | modality   | source                                   | typical dim |
 |------------|------------------------------------------|-------------|
-| `EPIC`     | v6 GNN embedding of co-elution PPI graph | 128         |
+| `EPIC`     | GNN embedding of co-elution PPI graph    | 128         |
 | `APMS`     | node2vec over an AP-MS network           | —           |
 | `Image`    | DenseNet-121 immunofluorescence features | —           |
 | `Sequence` | protein language-model embedding         | —           |
@@ -71,12 +71,12 @@ delta.
 
 ---
 
-## 3. Layer 1 — v6 GNN (`joint_embed_v6.py`)
+## 3. Layer 1 — GNN encoder (`two_stage/joint_embed.py`)
 
 Encodes each per-replicate co-elution PPI graph into an aligned per-protein
 embedding (the `EPIC` modality). Run once; produces
 `EPIC_<cond>_avg.tsv` per condition (drop these into the manifest). See
-`python joint_embed_v6.py --help` for the graph-input flags.
+`python -m two_stage.joint_embed --help` for the graph-input flags.
 
 Conventions enforced at output:
 - embeddings are **L2-normalised** (cosine similarity is directly meaningful);
@@ -85,10 +85,10 @@ Conventions enforced at output:
 
 ---
 
-## 4. Layer 2 — MUSE Stage 1 (`muse_stage1/`)
+## 4. Layer 2 — MUSE Stage 1 (`two_stage/stage1/`)
 
 ```bash
-python -m muse_stage1.runner \
+python -m two_stage.stage1.runner \
     --manifest   input/manifest.json \
     --outdir     output/stage1 \
     --epochs     <N>
@@ -106,13 +106,13 @@ physical-interaction AUROC on `static_latent.tsv` should be well above chance
 
 ---
 
-## 5. Layer 3 — Stage 2 adapter (`two_stage_v3/`)
+## 5. Layer 3 — Stage 2 adapter (`two_stage/stage2/`)
 
 Train one adapter per condition (including a negative control). Recommended
 **unified, drift-removed** configuration:
 
 ```bash
-python -m two_stage_v3.training_v3 \
+python -m two_stage.stage2.training \
     --stage1_outdir    output/stage1 \
     --manifest         input/manifest.json \
     --outdir           output/stage2/cisplatin \
@@ -147,9 +147,9 @@ namespace as the manifest.
 ### Inference, evaluation, modules
 
 ```bash
-python -m two_stage_v3.inference_v3  --adapter_dir output/stage2/cisplatin ...
-python -m two_stage_v3.eval          --corum reference/corum_humanComplexes.txt ...
-python -m two_stage_v3.direction_modules --confident output/stage2/cisplatin/... ...
+python -m two_stage.stage2.inference  --adapter_dir output/stage2/cisplatin ...
+python -m two_stage.stage2.eval          --corum reference/corum_humanComplexes.txt ...
+python -m two_stage.stage2.direction_modules --confident output/stage2/cisplatin/... ...
 ```
 
 Stage-2 outputs per condition:
@@ -162,7 +162,7 @@ Stage-2 outputs per condition:
 
 ## 6. Reference data for evaluation
 
-`two_stage_v3/eval.py` and the enrichment readouts validate against external
+`two_stage/stage2/eval.py` and the enrichment readouts validate against external
 gold standards that are **not** shipped with this repo (size/licensing):
 
 - **CORUM** human complexes (e.g. `corum_humanComplexes.txt`) — complex

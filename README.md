@@ -28,16 +28,16 @@ layer on top.
 ```
 Per-replicate, per-condition co-elution PPI graphs (e.g. EPIC on SEC-MS)
         │
-        ▼  joint_embed_v6.py
-  Layer 1 · v6 GNN  — shared-parameter GraphSAGE + shared identity table
+        ▼  joint_embed.py
+  Layer 1 · GNN  — shared-parameter GraphSAGE + shared identity table
                       → cross-condition-aligned per-protein EPIC embeddings
         │
-        ▼  muse_stage1/
+        ▼  two_stage/stage1/
   Layer 2 · MUSE Stage 1 — mask-aware multimodal autoencoder
                            (EPIC + AP-MS + image + sequence)
                       → static_latent.tsv  (the reference cell map)
         │
-        ▼  two_stage_v3/
+        ▼  two_stage/stage2/
   Layer 3 · Stage 2 adapter — neighbourhood-aware, coherence-weighted
                               delta over the static map, per perturbation
                       → z_treat.tsv, learned_magnitude.tsv, direction modules
@@ -50,7 +50,7 @@ full pipeline.
 
 ## The three layers
 
-### Layer 1 — v6 GNN EPIC encoder (`joint_embed_v6.py`)
+### Layer 1 — GNN EPIC encoder (`joint_embed.py`)
 A **shared-parameter** GraphSAGE encoder applied to *every* per-replicate
 co-elution PPI graph, with a **shared learnable identity table** (one vector
 per protein, common to all graphs). The identity table is what aligns
@@ -60,7 +60,7 @@ modulo the neighbourhood-driven shift, **and that shift is the treatment
 delta**. Output is L2-normalised; an optional per-protein σ²-head estimates
 replicate noise (detached from the embedding so it can never bias it).
 
-### Layer 2 — MUSE Stage 1 multimodal map (`muse_stage1/`)
+### Layer 2 — MUSE Stage 1 multimodal map (`two_stage/stage1/`)
 A MUSE-style multimodal autoencoder with three additions over the published
 static map:
 - **Union (not intersection) protein coverage** via mask-aware fusion — a
@@ -73,7 +73,7 @@ static map:
 Produces `static_latent.tsv`: the L2-normalised joint co-embedding used as
 the reference map (the "anchor") for Stage 2.
 
-### Layer 3 — Stage 2 neighbourhood adapter (`two_stage_v3/`)
+### Layer 3 — Stage 2 neighbourhood adapter (`two_stage/stage2/`)
 Per perturbation, learns how the static map remodels. Core ideas:
 
 - **Leave-one-out neighbourhood prediction** — each protein's treatment delta
@@ -120,13 +120,13 @@ and a full worked invocation).
 
 ```bash
 # Layer 1 — encode each co-elution PPI graph into aligned per-protein embeddings
-python joint_embed_v6.py --help
+python -m two_stage.joint_embed --help
 
 # Layer 2 — fuse modalities into the static reference map
-python -m muse_stage1.runner --help          # writes static_latent.tsv
+python -m two_stage.stage1.runner --help          # writes static_latent.tsv
 
 # Layer 3 — learn the per-perturbation remodelling (recommended config)
-python -m two_stage_v3.training_v3 \
+python -m two_stage.stage2.training \
     --stage1_outdir  <stage1_outdir> \
     --manifest       <manifest.json> \
     --epic_name      epic \
@@ -138,9 +138,9 @@ python -m two_stage_v3.training_v3 \
     --spherical --unified --drift_remove \
     --n_epochs 300 --lr 1e-3
 
-python -m two_stage_v3.inference_v3 --help    # writes z_treat.tsv, learned_magnitude.tsv
-python -m two_stage_v3.eval        --help     # CORUM remodelling, cluster transitions, HPA shift
-python -m two_stage_v3.direction_modules --help   # coordinated remodelling modules + GO:BP
+python -m two_stage.stage2.inference --help    # writes z_treat.tsv, learned_magnitude.tsv
+python -m two_stage.stage2.eval        --help     # CORUM remodelling, cluster transitions, HPA shift
+python -m two_stage.stage2.direction_modules --help   # coordinated remodelling modules + GO:BP
 ```
 
 Always run a **negative control** condition (e.g. a held-out untreated
@@ -162,7 +162,7 @@ the primary guard against hallucinated signal.
   (direction modules are FDR-significant), and the remodelled proteins are
   exactly those that recluster while the large-scale map structure is retained.
 - The two-stage differential enriches for drug MOA **better** than either the
-  raw co-elution feature differential or the v6-embedding-subtraction
+  raw co-elution feature differential or the GNN-embedding-subtraction
   differential.
 
 ---
@@ -179,25 +179,31 @@ single thing that moves the ceiling is **more replicates**.
 
 The design history — the hallucination failure mode, every fix tried, and the
 breakthrough — is documented in
-[`two_stage_v3/docs/`](two_stage_v3/docs/).
+[`two_stage/stage2/docs/`](two_stage/stage2/docs/).
 
 ---
 
 ## Repository layout
 
+Everything lives in a single self-contained `two_stage/` package — Stage 2
+imports the frozen Stage 1 model directly from `two_stage.stage1`, with no
+dependency on any external package.
+
 ```
-joint_embed_v6.py          Layer 1 · v6 GNN co-elution encoder
-muse_stage1/               Layer 2 · MUSE multimodal static map
-muse_stage1_vae/           Layer 2 · experimental VAE variant (not recommended)
-two_stage_v3/              Layer 3 · Stage 2 perturbation adapter (the core)
-  architecture_v3.py         NeighborhoodAdapter
-  training_v3.py             per-condition training
-  inference_v3.py            apply a trained adapter
-  losses_v3.py               Kendall LOO + decoder-stability losses
-  stage1_cache.py            loads the frozen Stage-1 model + builds kNN
-  direction_modules.py       coordinated remodelling modules + GO:BP enrichment
-  eval.py                    CORUM remodelling / cluster transitions / HPA shift
-  docs/                      design rationale, failure analysis, readouts
+two_stage/
+  joint_embed.py           Layer 1 · GNN co-elution encoder (the EPIC modality)
+  stage1/                  Layer 2 · MUSE multimodal static map
+    model.py  train.py  runner.py  losses.py  dropout.py  pseudo_labels.py
+    vae/                   experimental VAE variant (not recommended)
+  stage2/                  Layer 3 · perturbation adapter (the core)
+    architecture.py          NeighborhoodAdapter
+    training.py              per-condition training
+    inference.py             apply a trained adapter
+    losses.py                Kendall LOO + decoder-stability losses
+    stage1_cache.py          loads the frozen Stage-1 model + builds kNN
+    direction_modules.py     coordinated remodelling modules + GO:BP enrichment
+    eval.py                  CORUM remodelling / cluster transitions / HPA shift
+    docs/                    design rationale, failure analysis, readouts
 docs/PIPELINE.md           manifest schema + full worked invocation
 ```
 

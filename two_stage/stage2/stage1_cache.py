@@ -44,15 +44,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-# Local imports — kept lazy so the package is importable without the muse_stage1
+# Local imports — kept lazy so the package is importable without the two_stage.stage1
 # packages present (e.g. when loading a saved cache for inference).
 def _import_muse_v1():
-    from muse_stage1.model import MUSEStage1, make_model
+    from ..stage1.model import MUSEStage1, make_model
     return MUSEStage1, make_model
 
 
 def _import_muse_vae():
-    from muse_stage1_vae.model import MUSEStage1VAE, make_vae_model
+    from ..stage1.vae.model import MUSEStage1VAE, make_vae_model
     return MUSEStage1VAE, make_vae_model
 
 
@@ -223,7 +223,7 @@ def cluster_z_leiden(Z: np.ndarray, k: int = 15, resolution: float = 1.0,
     """Cluster z-space with Leiden on a mutual cosine kNN graph.
     Returns int array of cluster ids in [0, K)."""
     try:
-        from muse_stage1.pseudo_labels import cluster_leiden
+        from ..stage1.pseudo_labels import cluster_leiden
     except Exception:
         cluster_leiden = None
     if cluster_leiden is not None:
@@ -644,7 +644,7 @@ class Stage1Cache:
           2. Resolve `epic_name` against the model's encoder keys.
           3. Read `static_latent.tsv` for the protein universe + z.
           4. Read `per_modality/<m>.tsv` for per-modality h_m.
-          5. Read raw modality input matrices (via muse_stage1.train helpers).
+          5. Read raw modality input matrices (via two_stage.stage1.train helpers).
           6. Compute σ²_EPIC, anchor confidence.
           7. Run Leiden on z-space; build cluster_compat kNN graph.
           8. Attach encoders/decoders to the cache and return.
@@ -695,9 +695,9 @@ class Stage1Cache:
 
         # ---- 5) raw modality inputs (for σ²_EPIC and conf) ----
         try:
-            from muse_stage1.train import load_modality_matrices, assemble_tensors
+            from ..stage1.train import load_modality_matrices, assemble_tensors
         except Exception as exc:
-            raise RuntimeError("muse_stage1 package required to build the cache "
+            raise RuntimeError("two_stage.stage1 package required to build the cache "
                                "(needed for per-modality input loading)") from exc
         print("[cache] loading raw modality matrices...")
         mods_raw = load_modality_matrices(manifest_path, untreated_only=True)
@@ -778,7 +778,7 @@ class Stage1Cache:
             if epic_name not in Xs_raw:
                 raise RuntimeError(
                     f"EPIC modality {epic_name!r} present in model but not "
-                    f"loaded by muse_stage1.train.load_modality_matrices.")
+                    f"loaded by two_stage.stage1.train.load_modality_matrices.")
             xe_t = torch.from_numpy(Xs_raw[epic_name]).to(device)
             me_t = torch.from_numpy(Ms_raw[epic_name]).to(device)
             sigma2_epic = per_protein_epic_sigma2(model, xe_t, me_t, z_t,

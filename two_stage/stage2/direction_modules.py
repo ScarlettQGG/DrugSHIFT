@@ -16,8 +16,8 @@ Each module = one coherent pathway/complex moving together (translocation /
 co-dissociation / co-formation). Run per drug.
 
 Usage:
-  python -m two_stage_v3.direction_modules \
-      --stage1_latent output/muse_stage1_v6sig0.5_v3compat/static_latent.tsv \
+  python -m two_stage.stage2.direction_modules \
+      --stage1_latent output/stage1/static_latent.tsv \
       --neg_latent    output/stage2_v3_FINAL/inference_negCTRL/z_treat.tsv \
       --drug cisplatin=output/stage2_v3_FINAL/inference_cisplatin \
       --drug vorinostat=output/stage2_v3_FINAL/inference_vorinostat \

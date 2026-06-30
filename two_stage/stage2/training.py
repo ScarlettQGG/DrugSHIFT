@@ -31,8 +31,8 @@ import torch
 import torch.nn.functional as F
 
 from .stage1_cache import Stage1Cache, load_epic_per_condition, _align
-from .architecture_v3 import NeighborhoodAdapter
-from .losses_v3 import LossWeights, compose_loss
+from .architecture import NeighborhoodAdapter
+from .losses import LossWeights, compose_loss
 
 
 # ───────────────────────────────────────────────────────────────────────────
