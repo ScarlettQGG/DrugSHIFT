@@ -16,11 +16,6 @@ chemotherapeutics — **cisplatin** (DNA-damage agent) and **vorinostat**
 method itself is agnostic to cell type, perturbation, and which modality
 carries the perturbation signal.
 
-Method foundation: Schaffer, Hu, Qian et al., *Nature* 2025 — "Multimodal
-cell maps as a foundation for structural and functional genomics" (which
-builds the *static* map). This repository adds the **perturbation-aware**
-layer on top.
-
 ---
 
 ## Pipeline
@@ -170,20 +165,6 @@ the primary guard against hallucinated signal.
   raw co-elution feature differential or the GNN-embedding-subtraction
   differential.
 
----
-
-## Honest limitations
-
-This pipeline is **replicate-limited**. With only two usable replicates per
-condition, the co-elution PPI signal is noisy (RF edge-score reproducibility
-r ≈ 0.36; strong-edge persistence ≈ 3%), even though the underlying
-co-elution *features* reproduce well (r ≈ 0.84). The unified, drift-removed
-Stage 2 model is the most honest readout obtainable at this replicate depth —
-treat per-complex calls as **hypotheses** to validate, not conclusions. The
-single thing that moves the ceiling is **more replicates**.
-
-The design history — the hallucination failure mode, every fix tried, and the
-breakthrough — is documented in [`docs/`](docs/).
 
 ---
 
@@ -209,9 +190,6 @@ docs/                   PIPELINE.md (manifest + worked run) + design/diagnosis n
 ```
 
 ## Citation
-
-If you use this code, please cite the foundation paper (Schaffer, Hu, Qian
-et al., *Nature* 2025) and link this repository.
 
 ## License
 
