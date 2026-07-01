@@ -1,6 +1,6 @@
 """Models for the two-stage pipeline.
 
-Stage 1 — ``MUSEStage1``: a MUSE-style, mask-aware multimodal autoencoder that
+Stage 1 — ``Stage1``: a mask-aware multimodal autoencoder that
 fuses the per-modality latents into one joint co-embedding (the static map).
 Stage 2 — ``NeighborhoodAdapter``: a neighbourhood-aware delta adapter that
 learns, per perturbation, how that map remodels (leave-one-out neighbour
@@ -39,7 +39,7 @@ class _MLP(nn.Module):
         return h
 
 
-class MUSEStage1(nn.Module):
+class Stage1(nn.Module):
     """MUSE-style joint embedding for >=2 modalities with missing-data masking.
 
     Parameters
@@ -127,8 +127,8 @@ def make_model(modality_dims: Dict[str, int],
                latent_dim_per_modality: int = 64,
                joint_dim: int = 256,
                hidden_dim: int = 256,
-               dropout: float = 0.0) -> MUSEStage1:
-    return MUSEStage1(modality_dims=modality_dims,
+               dropout: float = 0.0) -> Stage1:
+    return Stage1(modality_dims=modality_dims,
                       latent_dim_per_modality=latent_dim_per_modality,
                       joint_dim=joint_dim,
                       hidden_dim=hidden_dim,

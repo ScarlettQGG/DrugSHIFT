@@ -47,8 +47,8 @@ import torch.nn.functional as F
 # Local imports — kept lazy so the package is importable without the two_stage.stage1
 # packages present (e.g. when loading a saved cache for inference).
 def _import_muse_v1():
-    from .model import MUSEStage1, make_model
-    return MUSEStage1, make_model
+    from .model import Stage1, make_model
+    return Stage1, make_model
 
 
 def _import_muse_vae():

@@ -23,11 +23,11 @@ carries the perturbation signal.
 ```
 Per-replicate, per-condition co-elution PPI graphs (e.g. EPIC on SEC-MS)
         │
-        ▼  two_stage.joint_embed
+        ▼  joint_embed.py  (preprocessing, outside the package)
   Layer 1 · GNN  — shared-parameter GraphSAGE + shared identity table
                       → cross-condition-aligned per-protein EPIC embeddings
         │
-        ▼  Stage 1  (two_stage.model.MUSEStage1)
+        ▼  Stage 1  (two_stage.model.Stage1)
   Layer 2 · MUSE Stage 1 — mask-aware multimodal autoencoder
                            (EPIC + AP-MS + image + sequence)
                       → static_latent.tsv  (the reference cell map)
@@ -46,7 +46,7 @@ The two stages live in one flat `two_stage/` package and share code
 
 ## The three layers
 
-### Layer 1 — GNN EPIC encoder (`two_stage.joint_embed`)
+### Layer 1 — GNN EPIC encoder (`joint_embed.py`)
 A **shared-parameter** GraphSAGE encoder applied to *every* per-replicate
 co-elution PPI graph, with a **shared learnable identity table** (one vector
 per protein, common to all graphs). The identity table is what aligns
@@ -56,7 +56,7 @@ modulo the neighbourhood-driven shift, **and that shift is the treatment
 delta**. Output is L2-normalised; an optional per-protein σ²-head estimates
 replicate noise (detached from the embedding so it can never bias it).
 
-### Layer 2 — Stage 1 multimodal map (`two_stage.model.MUSEStage1`)
+### Layer 2 — Stage 1 multimodal map (`two_stage.model.Stage1`)
 Stage 1 builds the static reference cell map. It is a mask-aware multimodal
 autoencoder: per-modality encoders embed EPIC, AP-MS, image and sequence, a
 fusion network combines them into one joint co-embedding, and per-modality
@@ -118,7 +118,7 @@ and a full worked invocation).
 
 ```bash
 # Layer 1 — encode each co-elution PPI graph into aligned per-protein embeddings
-python -m two_stage.joint_embed --help
+python joint_embed.py --help
 
 # Layers 2 + 3 — train BOTH stages end to end (recommended config).
 # Stage 1 -> <outdir>/stage1 ; per-condition adapters -> <outdir>/stage2/<cond>
@@ -170,14 +170,17 @@ the primary guard against hallucinated signal.
 
 ## Repository layout
 
-Everything is one flat, self-contained `two_stage/` package — both stages
-share `model.py` / `losses.py` / `train.py`, and Stage 2 loads the frozen
-Stage 1 model from the same package, with no external dependency.
+The two-stage model is one flat, self-contained `two_stage/` package — both
+stages share `model.py` / `losses.py` / `train.py`, and Stage 2 loads the
+frozen Stage 1 model from the same package, with no external dependency. The
+SEC-MS co-elution encoder (`joint_embed.py`) sits **outside** the package as a
+preprocessing step that produces the EPIC modality.
 
 ```
+joint_embed.py          SEC-MS preprocessing · GNN co-elution encoder (produces the EPIC modality)
+
 two_stage/
-  joint_embed.py        Layer 1 · GNN co-elution encoder (produces the EPIC modality)
-  model.py              MUSEStage1 (Stage 1) + NeighborhoodAdapter (Stage 2)
+  model.py              Stage1 (Stage 1) + NeighborhoodAdapter (Stage 2)
   losses.py             Stage 1 recon/triplet losses + Stage 2 LOO/decoder-stability losses
   train.py              unified CLI — `--stage {1,2,both}` (default both)
   cache.py              loads the frozen Stage-1 model + builds the cluster-aware kNN

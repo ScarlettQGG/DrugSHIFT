@@ -26,7 +26,7 @@ from torch.utils.data import Dataset, DataLoader
 
 from .dropout import apply_dropout, random_modality_dropout
 from .losses import total_loss, LossWeights, compose_loss
-from .model import MUSEStage1, make_model, NeighborhoodAdapter
+from .model import Stage1, make_model, NeighborhoodAdapter
 from .pseudo_labels import compute_all_pseudo_labels
 from .cache import Stage1Cache, load_epic_per_condition, _align
 

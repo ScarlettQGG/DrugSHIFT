@@ -71,12 +71,12 @@ delta.
 
 ---
 
-## 3. Layer 1 — GNN encoder (`two_stage/joint_embed.py`)
+## 3. Layer 1 — GNN encoder (`joint_embed.py`, preprocessing)
 
 Encodes each per-replicate co-elution PPI graph into an aligned per-protein
 embedding (the `EPIC` modality). Run once; produces
 `EPIC_<cond>_avg.tsv` per condition (drop these into the manifest). See
-`python -m two_stage.joint_embed --help` for the graph-input flags.
+`python joint_embed.py --help` for the graph-input flags.
 
 Conventions enforced at output:
 - embeddings are **L2-normalised** (cosine similarity is directly meaningful);
@@ -85,7 +85,7 @@ Conventions enforced at output:
 
 ---
 
-## 4. Layer 2 — Stage 1 map (`two_stage.model.MUSEStage1`)
+## 4. Layer 2 — Stage 1 map (`two_stage.model.Stage1`)
 
 ```bash
 python -m two_stage.train --stage 1 \

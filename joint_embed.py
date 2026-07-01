@@ -44,7 +44,7 @@ Outputs match v3/v4 layout so the existing eval_output2 pipeline works:
 
 Usage
 -----
-    python -m two_stage.joint_embed \
+    python joint_embed.py \
         --base /path/to/analysis_base \
         --outdir output/joint_embed/cutoff_0.7 \
         --cutoff 0.7 \
