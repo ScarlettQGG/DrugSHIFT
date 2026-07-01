@@ -22,7 +22,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .cache import Stage1Cache
+from .stage1_bridge import Stage1Cache
 from .model import NeighborhoodAdapter
 from .train import load_aligned_epic
 

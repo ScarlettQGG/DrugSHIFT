@@ -14,7 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 if TYPE_CHECKING:  # only for type hints — avoids a model<->cache import cycle
-    from .cache import Stage1Cache
+    from .stage1_bridge import Stage1Cache
 
 
 # ===================== Stage 1: MUSE multimodal model =====================

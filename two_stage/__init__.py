@@ -17,7 +17,7 @@ Public surface:
     )
 """
 from .model import Stage1, make_model, NeighborhoodAdapter
-from .cache import Stage1Cache
+from .stage1_bridge import Stage1Cache
 from .train import train_stage1, train_adapter
 from .inference import run_inference
 

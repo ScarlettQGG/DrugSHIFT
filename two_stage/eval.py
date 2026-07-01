@@ -54,7 +54,7 @@ try:
 except Exception:
     _MPL_OK = False
 
-from .cache import Stage1Cache, cluster_z_leiden
+from .stage1_bridge import Stage1Cache, cluster_z_leiden
 
 
 # ───────────────────────────────────────────────────────────────────────────

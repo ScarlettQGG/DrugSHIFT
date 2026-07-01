@@ -8,7 +8,7 @@ Stage 2 v3 is a small, per-condition adapter that sits on top of a frozen MUSE S
 
 | file | role |
 |---|---|
-| `cache.py` | `Stage1Cache.from_stage1_dir(stage1_outdir, manifest)` — builds z, h_m, σ²_EPIC, conf, Leiden clusters, cluster-aware kNN in memory; attaches frozen Stage 1 decoders. **No persisted cache file** — every Stage 2 task recomputes (~30 sec) so Stage 1 is the single source of truth. |
+| `stage1_bridge.py` | `Stage1Cache.from_stage1_dir(stage1_outdir, manifest)` — builds z, h_m, σ²_EPIC, conf, Leiden clusters, cluster-aware kNN in memory; attaches frozen Stage 1 decoders. **No persisted cache file** — every Stage 2 task recomputes (~30 sec) so Stage 1 is the single source of truth. |
 | `model.py` (`NeighborhoodAdapter`) | `NeighborhoodAdapter` — self-context + delta encoder + attention + δ̂/σ²_pred head + (b)+residual δ_raw projection + Bayesian combination |
 | `losses.py` | `L_LOO` (Kendall) + decoder-stability losses + `L_epic_recon` |
 | `train.py` | Full-batch train loop + CLI; one adapter per condition |

@@ -28,7 +28,7 @@ Per-replicate, per-condition co-elution PPI graphs (e.g. EPIC on SEC-MS)
                       → cross-condition-aligned per-protein EPIC embeddings
         │
         ▼  Stage 1  (two_stage.model.Stage1)
-  Layer 2 · MUSE Stage 1 — mask-aware multimodal autoencoder
+  Layer 2 · Stage 1 — mask-aware multimodal autoencoder
                            (EPIC + AP-MS + image + sequence)
                       → static_latent.tsv  (the reference cell map)
         │
@@ -183,7 +183,7 @@ two_stage/
   model.py              Stage1 (Stage 1) + NeighborhoodAdapter (Stage 2)
   losses.py             Stage 1 recon/triplet losses + Stage 2 LOO/decoder-stability losses
   train.py              unified CLI — `--stage {1,2,both}` (default both)
-  cache.py              loads the frozen Stage-1 model + builds the cluster-aware kNN
+  stage1_bridge.py      loads the frozen Stage-1 model + builds the cluster-aware kNN
   inference.py          apply a trained adapter → z_treat / learned_magnitude
   eval.py               CORUM remodelling / cluster transitions / HPA shift
   direction_modules.py  coordinated remodelling modules + GO:BP enrichment
