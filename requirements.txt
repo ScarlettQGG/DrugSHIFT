@@ -9,6 +9,6 @@ torch>=2.0
 requests>=2.28
 
 # Optional — Leiden community detection for cluster-aware kNN.
-# If absent, two_stage.stage1.pseudo_labels falls back to KMeans automatically.
+# If absent, two_stage.pseudo_labels falls back to KMeans automatically.
 python-igraph>=0.10
 leidenalg>=0.9

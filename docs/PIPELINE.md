@@ -85,13 +85,13 @@ Conventions enforced at output:
 
 ---
 
-## 4. Layer 2 — MUSE Stage 1 (`two_stage/stage1/`)
+## 4. Layer 2 — Stage 1 map (`two_stage.model.MUSEStage1`)
 
 ```bash
-python -m two_stage.stage1.runner \
+python -m two_stage.train --stage 1 \
     --manifest   input/manifest.json \
     --outdir     output/stage1 \
-    --epochs     <N>
+    --s1_epochs  <N>
 ```
 
 Key outputs in `output/stage1/`:
@@ -106,18 +106,19 @@ physical-interaction AUROC on `static_latent.tsv` should be well above chance
 
 ---
 
-## 5. Layer 3 — Stage 2 adapter (`two_stage/stage2/`)
+## 5. Layer 3 — Stage 2 adapter (`two_stage.model.NeighborhoodAdapter`)
 
 Train one adapter per condition (including a negative control). Recommended
-**unified, drift-removed** configuration:
+**unified, drift-removed** configuration. Use `--conditions` to list which
+conditions to train (each writes to `<outdir>/<condition>`):
 
 ```bash
-python -m two_stage.stage2.training \
+python -m two_stage.train --stage 2 \
     --stage1_outdir    output/stage1 \
     --manifest         input/manifest.json \
-    --outdir           output/stage2/cisplatin \
+    --outdir           output/stage2 \
     --epic_name        epic \
-    --condition        cisplatin \
+    --conditions       cisplatin vorinostat negative_ctrl \
     --cond_names       cisplatin vorinostat negative_ctrl \
     --sigma2_epic_path input/sigma2_epic_empirical.tsv \
     --sigma2_raw_scale 0.1 --sigma2_raw_floor 0.001 \
@@ -125,6 +126,9 @@ python -m two_stage.stage2.training \
     --spherical --unified --drift_remove \
     --n_epochs 300 --lr 1e-3
 ```
+
+Or run Layers 2 + 3 together with `--stage both` (Stage 1 → `<outdir>/stage1`,
+adapters → `<outdir>/stage2/<condition>`).
 
 What the key flags do:
 
@@ -147,9 +151,9 @@ namespace as the manifest.
 ### Inference, evaluation, modules
 
 ```bash
-python -m two_stage.stage2.inference  --adapter_dir output/stage2/cisplatin ...
-python -m two_stage.stage2.eval          --corum reference/corum_humanComplexes.txt ...
-python -m two_stage.stage2.direction_modules --confident output/stage2/cisplatin/... ...
+python -m two_stage.inference  --adapter_dir output/stage2/cisplatin ...
+python -m two_stage.eval          --corum reference/corum_humanComplexes.txt ...
+python -m two_stage.direction_modules --confident output/stage2/cisplatin/... ...
 ```
 
 Stage-2 outputs per condition:
@@ -162,7 +166,7 @@ Stage-2 outputs per condition:
 
 ## 6. Reference data for evaluation
 
-`two_stage/stage2/eval.py` and the enrichment readouts validate against external
+`two_stage/eval.py` and the enrichment readouts validate against external
 gold standards that are **not** shipped with this repo (size/licensing):
 
 - **CORUM** human complexes (e.g. `corum_humanComplexes.txt`) — complex

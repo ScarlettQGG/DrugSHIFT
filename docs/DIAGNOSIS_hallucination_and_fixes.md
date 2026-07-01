@@ -57,7 +57,7 @@ movement was ~99% tangential, so the hallucination was **real angular movement**
 ## 4. Fixes implemented (all flag-gated, OFF by default)
 | flag | effect | file |
 |---|---|---|
-| `--sigma2_epic_path FILE` | inject empirical per-protein replicate σ² as σ²_EPIC (vs heuristic) so the combiner uses the observation for clean proteins | stage1_cache, training, inference |
+| `--sigma2_epic_path FILE` | inject empirical per-protein replicate σ² as σ²_EPIC (vs heuristic) so the combiner uses the observation for clean proteins | cache, train, inference |
 | `--w_residual W` | L2 penalty `‖delta_residual‖²` (sum-over-dims) — caps the free null-space drift | losses, training |
 | `--spherical` | renormalize z_treat onto the sphere (pure angular movement) + cosine EPIC anchor (`1−cos(D_epic(z_treat),EPIC_treat)`) — geometry-correct | architecture, losses, training, inference |
 | `--coherence_gate [--coherence_gate_gamma G]` | scale movement by `max(0, cos(δ_raw_proj, δ̂))` — suppress incoherent (noise) proteins, keep coherent (complex-wide) remodelling | architecture, training, inference |
@@ -112,7 +112,7 @@ top the list depends on the knobs.
 
 ## 8. Reproduce the principled run
 ```bash
-python -m two_stage.stage2.training \
+python -m two_stage.train --stage 2 \
   --stage1_outdir output/stage1 \
   --manifest input_secms_6074/manifest.json --epic_name epic \
   --condition cisplatin --cond_names cisplatin vorinostat negative_ctrl \

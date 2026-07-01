@@ -1,23 +1,26 @@
 """two_stage — self-contained perturbation-aware multimodal cell-mapping model.
 
-Two stages, one package:
+Two stages in one flat package:
 
-    stage1   MUSE-style mask-aware multimodal autoencoder → the static
-             reference cell map (``static_latent.tsv``).
-    stage2   Neighbourhood-aware, coherence-weighted delta adapter that
-             learns, per perturbation, how the Stage-1 map remodels.
+    Stage 1  ``MUSEStage1``        the static multimodal reference map
+    Stage 2  ``NeighborhoodAdapter``  per-perturbation remodelling of that map
 
-A co-elution PPI encoder (``two_stage.joint_embed``) produces the EPIC
-modality that feeds Stage 1.
-
-Stage 2 imports the frozen Stage 1 model directly from this package
-(``two_stage.stage1``) — no external dependency on a separate Stage-1
-package is required.
+A co-elution PPI encoder (``two_stage.joint_embed``) produces the EPIC modality
+that feeds Stage 1. Train either stage or both via ``python -m two_stage.train
+--stage {1,2,both}`` (default both).
 
 Public surface:
-    from two_stage.stage2 import (
-        Stage1Cache, NeighborhoodAdapter, train_adapter, run_inference,
+    from two_stage import (
+        MUSEStage1, make_model, NeighborhoodAdapter, Stage1Cache,
+        train_stage1, train_adapter, run_inference,
     )
 """
+from .model import MUSEStage1, make_model, NeighborhoodAdapter
+from .cache import Stage1Cache
+from .train import train_stage1, train_adapter
+from .inference import run_inference
 
-__all__ = ["stage1", "stage2", "joint_embed"]
+__all__ = [
+    "MUSEStage1", "make_model", "NeighborhoodAdapter", "Stage1Cache",
+    "train_stage1", "train_adapter", "run_inference",
+]

@@ -8,10 +8,10 @@ Stage 2 v3 is a small, per-condition adapter that sits on top of a frozen MUSE S
 
 | file | role |
 |---|---|
-| `stage1_cache.py` | `Stage1Cache.from_stage1_dir(stage1_outdir, manifest)` — builds z, h_m, σ²_EPIC, conf, Leiden clusters, cluster-aware kNN in memory; attaches frozen Stage 1 decoders. **No persisted cache file** — every Stage 2 task recomputes (~30 sec) so Stage 1 is the single source of truth. |
-| `architecture.py` | `NeighborhoodAdapter` — self-context + delta encoder + attention + δ̂/σ²_pred head + (b)+residual δ_raw projection + Bayesian combination |
+| `cache.py` | `Stage1Cache.from_stage1_dir(stage1_outdir, manifest)` — builds z, h_m, σ²_EPIC, conf, Leiden clusters, cluster-aware kNN in memory; attaches frozen Stage 1 decoders. **No persisted cache file** — every Stage 2 task recomputes (~30 sec) so Stage 1 is the single source of truth. |
+| `model.py` (`NeighborhoodAdapter`) | `NeighborhoodAdapter` — self-context + delta encoder + attention + δ̂/σ²_pred head + (b)+residual δ_raw projection + Bayesian combination |
 | `losses.py` | `L_LOO` (Kendall) + decoder-stability losses + `L_epic_recon` |
-| `training.py` | Full-batch train loop + CLI; one adapter per condition |
+| `train.py` | Full-batch train loop + CLI; one adapter per condition |
 | `inference.py` | Apply trained adapter; dump `z_treat`, `delta_final`, `delta_hat`, `sigma2_pred`, `coherence` |
 | `eval.py` | Biological eval: CORUM remodeling, cluster transitions, HPA shift, coherence × ‖δ‖ flags |
 | `direction_modules.py` | Decompose the confident set into coordinated movement modules + per-module GO:BP enrichment |
@@ -25,7 +25,7 @@ placeholders.
 ```bash
 # 1. Train one adapter per condition (cisplatin, vorinostat, and a negative control)
 #    No "build cache" step — training rebuilds Stage 1 features in-memory.
-python -m two_stage.stage2.training \
+python -m two_stage.train --stage 2 \
     --stage1_outdir    <stage1_outdir> \
     --manifest         <manifest.json> \
     --epic_name        epic \
@@ -37,20 +37,20 @@ python -m two_stage.stage2.training \
     --n_epochs 300 --lr 1e-3
 
 # 2. Inference (the adapter's config.json already remembers stage1_outdir + manifest_path)
-python -m two_stage.stage2.inference \
+python -m two_stage.inference \
     --adapter_dir <out>/adapter_cisplatin \
     --manifest    <manifest.json> \
     --outdir      <out>/inference_cisplatin
 
 # 3. Eval
-python -m two_stage.stage2.eval \
+python -m two_stage.eval \
     --adapter_dir   <out>/adapter_cisplatin \
     --inference_dir <out>/inference_cisplatin \
     --corum         <corum_humanComplexes.txt> \
     --outdir        <out>/eval_cisplatin
 
 # 4. Coordinated remodelling modules + GO:BP enrichment
-python -m two_stage.stage2.direction_modules \
+python -m two_stage.direction_modules \
     --inference_dir <out>/inference_cisplatin --outdir <out>/modules_cisplatin
 ```
 

@@ -74,7 +74,7 @@ transcription/RB1-SET-ZMYND8 (vorinostat) — are the treatment-SPECIFIC signal.
 
 ## 8. RECOMMENDED final config
 ```
-python -m two_stage.stage2.training \
+python -m two_stage.train --stage 2 \
   --stage1_outdir output/stage1 --manifest input_secms_6074/manifest.json \
   --epic_name epic --condition <cond> --cond_names cisplatin vorinostat negative_ctrl \
   --sigma2_epic_path input_secms_6074/sigma2_epic_empirical.tsv \

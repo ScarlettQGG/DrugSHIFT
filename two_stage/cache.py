@@ -47,13 +47,12 @@ import torch.nn.functional as F
 # Local imports — kept lazy so the package is importable without the two_stage.stage1
 # packages present (e.g. when loading a saved cache for inference).
 def _import_muse_v1():
-    from ..stage1.model import MUSEStage1, make_model
+    from .model import MUSEStage1, make_model
     return MUSEStage1, make_model
 
 
 def _import_muse_vae():
-    from ..stage1.vae.model import MUSEStage1VAE, make_vae_model
-    return MUSEStage1VAE, make_vae_model
+    raise RuntimeError("The VAE Stage-1 variant has been removed from this package.")
 
 
 def _is_vae_stage1(stage1_outdir: str) -> bool:
@@ -65,6 +64,7 @@ def _is_vae_stage1(stage1_outdir: str) -> bool:
       3. state_dict has encoder mu_head / log_sigma2_head keys
     Any one of these is sufficient.
     """
+    return False  # VAE Stage-1 variant removed — Stage 1 is always deterministic
     cfg_path = os.path.join(stage1_outdir, "vae_config.json")
     if os.path.isfile(cfg_path):
         try:
@@ -223,7 +223,7 @@ def cluster_z_leiden(Z: np.ndarray, k: int = 15, resolution: float = 1.0,
     """Cluster z-space with Leiden on a mutual cosine kNN graph.
     Returns int array of cluster ids in [0, K)."""
     try:
-        from ..stage1.pseudo_labels import cluster_leiden
+        from .pseudo_labels import cluster_leiden
     except Exception:
         cluster_leiden = None
     if cluster_leiden is not None:
@@ -695,7 +695,7 @@ class Stage1Cache:
 
         # ---- 5) raw modality inputs (for σ²_EPIC and conf) ----
         try:
-            from ..stage1.train import load_modality_matrices, assemble_tensors
+            from .train import load_modality_matrices, assemble_tensors
         except Exception as exc:
             raise RuntimeError("two_stage.stage1 package required to build the cache "
                                "(needed for per-modality input loading)") from exc

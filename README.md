@@ -28,29 +28,30 @@ layer on top.
 ```
 Per-replicate, per-condition co-elution PPI graphs (e.g. EPIC on SEC-MS)
         │
-        ▼  joint_embed.py
+        ▼  two_stage.joint_embed
   Layer 1 · GNN  — shared-parameter GraphSAGE + shared identity table
                       → cross-condition-aligned per-protein EPIC embeddings
         │
-        ▼  two_stage/stage1/
+        ▼  Stage 1  (two_stage.model.MUSEStage1)
   Layer 2 · MUSE Stage 1 — mask-aware multimodal autoencoder
                            (EPIC + AP-MS + image + sequence)
                       → static_latent.tsv  (the reference cell map)
         │
-        ▼  two_stage/stage2/
+        ▼  Stage 2  (two_stage.model.NeighborhoodAdapter)
   Layer 3 · Stage 2 adapter — neighbourhood-aware, coherence-weighted
                               delta over the static map, per perturbation
                       → z_treat.tsv, learned_magnitude.tsv, direction modules
 ```
 
-Each layer is a standalone, importable module; the three compose into the
-full pipeline.
+The two stages live in one flat `two_stage/` package and share code
+(`model.py`, `losses.py`, `train.py`). Train either stage or both with
+`python -m two_stage.train --stage {1,2,both}` (default both).
 
 ---
 
 ## The three layers
 
-### Layer 1 — GNN EPIC encoder (`joint_embed.py`)
+### Layer 1 — GNN EPIC encoder (`two_stage.joint_embed`)
 A **shared-parameter** GraphSAGE encoder applied to *every* per-replicate
 co-elution PPI graph, with a **shared learnable identity table** (one vector
 per protein, common to all graphs). The identity table is what aligns
@@ -60,20 +61,22 @@ modulo the neighbourhood-driven shift, **and that shift is the treatment
 delta**. Output is L2-normalised; an optional per-protein σ²-head estimates
 replicate noise (detached from the embedding so it can never bias it).
 
-### Layer 2 — MUSE Stage 1 multimodal map (`two_stage/stage1/`)
-A MUSE-style multimodal autoencoder with three additions over the published
-static map:
+### Layer 2 — Stage 1 multimodal map (`two_stage.model.MUSEStage1`)
+Stage 1 builds the static reference cell map. It is a mask-aware multimodal
+autoencoder: per-modality encoders embed EPIC, AP-MS, image and sequence, a
+fusion network combines them into one joint co-embedding, and per-modality
+decoders reconstruct each input from that joint z. Key properties:
 - **Union (not intersection) protein coverage** via mask-aware fusion — a
-  protein with only one modality still gets a valid embedding.
+  protein present in only one modality still gets a valid embedding.
 - **Modality dropout** at the encoder input — forces cross-modal prediction,
-  robust to inference-time missingness.
-- **Kendall homoscedastic uncertainty weighting** — auto-balances modalities
-  by difficulty.
+  so the map is robust to inference-time missingness.
+- **Kendall homoscedastic uncertainty weighting** — automatically balances
+  modalities by difficulty.
 
 Produces `static_latent.tsv`: the L2-normalised joint co-embedding used as
 the reference map (the "anchor") for Stage 2.
 
-### Layer 3 — Stage 2 neighbourhood adapter (`two_stage/stage2/`)
+### Layer 3 — Stage 2 neighbourhood adapter (`two_stage.model.NeighborhoodAdapter`)
 Per perturbation, learns how the static map remodels. Core ideas:
 
 - **Leave-one-out neighbourhood prediction** — each protein's treatment delta
@@ -122,15 +125,12 @@ and a full worked invocation).
 # Layer 1 — encode each co-elution PPI graph into aligned per-protein embeddings
 python -m two_stage.joint_embed --help
 
-# Layer 2 — fuse modalities into the static reference map
-python -m two_stage.stage1.runner --help          # writes static_latent.tsv
-
-# Layer 3 — learn the per-perturbation remodelling (recommended config)
-python -m two_stage.stage2.training \
-    --stage1_outdir  <stage1_outdir> \
+# Layers 2 + 3 — train BOTH stages end to end (recommended config).
+# Stage 1 -> <outdir>/stage1 ; per-condition adapters -> <outdir>/stage2/<cond>
+python -m two_stage.train --stage both \
     --manifest       <manifest.json> \
+    --outdir         <outdir> \
     --epic_name      epic \
-    --condition      cisplatin \
     --cond_names     cisplatin vorinostat negative_ctrl \
     --sigma2_epic_path <empirical_sigma2.tsv> \
     --sigma2_raw_scale 0.1 --sigma2_raw_floor 0.001 \
@@ -138,9 +138,14 @@ python -m two_stage.stage2.training \
     --spherical --unified --drift_remove \
     --n_epochs 300 --lr 1e-3
 
-python -m two_stage.stage2.inference --help    # writes z_treat.tsv, learned_magnitude.tsv
-python -m two_stage.stage2.eval        --help     # CORUM remodelling, cluster transitions, HPA shift
-python -m two_stage.stage2.direction_modules --help   # coordinated remodelling modules + GO:BP
+# ...or train a single stage:
+#   python -m two_stage.train --stage 1 --manifest <m> --outdir <stage1_dir>
+#   python -m two_stage.train --stage 2 --stage1_outdir <stage1_dir> \
+#       --manifest <m> --conditions cisplatin --outdir <stage2_dir> [recommended flags]
+
+python -m two_stage.inference --help          # writes z_treat.tsv, learned_magnitude.tsv
+python -m two_stage.eval --help               # CORUM remodelling, cluster transitions, HPA shift
+python -m two_stage.direction_modules --help  # coordinated remodelling modules + GO:BP
 ```
 
 Always run a **negative control** condition (e.g. a held-out untreated
@@ -178,33 +183,29 @@ treat per-complex calls as **hypotheses** to validate, not conclusions. The
 single thing that moves the ceiling is **more replicates**.
 
 The design history — the hallucination failure mode, every fix tried, and the
-breakthrough — is documented in
-[`two_stage/stage2/docs/`](two_stage/stage2/docs/).
+breakthrough — is documented in [`docs/`](docs/).
 
 ---
 
 ## Repository layout
 
-Everything lives in a single self-contained `two_stage/` package — Stage 2
-imports the frozen Stage 1 model directly from `two_stage.stage1`, with no
-dependency on any external package.
+Everything is one flat, self-contained `two_stage/` package — both stages
+share `model.py` / `losses.py` / `train.py`, and Stage 2 loads the frozen
+Stage 1 model from the same package, with no external dependency.
 
 ```
 two_stage/
-  joint_embed.py           Layer 1 · GNN co-elution encoder (the EPIC modality)
-  stage1/                  Layer 2 · MUSE multimodal static map
-    model.py  train.py  runner.py  losses.py  dropout.py  pseudo_labels.py
-    vae/                   experimental VAE variant (not recommended)
-  stage2/                  Layer 3 · perturbation adapter (the core)
-    architecture.py          NeighborhoodAdapter
-    training.py              per-condition training
-    inference.py             apply a trained adapter
-    losses.py                Kendall LOO + decoder-stability losses
-    stage1_cache.py          loads the frozen Stage-1 model + builds kNN
-    direction_modules.py     coordinated remodelling modules + GO:BP enrichment
-    eval.py                  CORUM remodelling / cluster transitions / HPA shift
-    docs/                    design rationale, failure analysis, readouts
-docs/PIPELINE.md           manifest schema + full worked invocation
+  joint_embed.py        Layer 1 · GNN co-elution encoder (produces the EPIC modality)
+  model.py              MUSEStage1 (Stage 1) + NeighborhoodAdapter (Stage 2)
+  losses.py             Stage 1 recon/triplet losses + Stage 2 LOO/decoder-stability losses
+  train.py              unified CLI — `--stage {1,2,both}` (default both)
+  cache.py              loads the frozen Stage-1 model + builds the cluster-aware kNN
+  inference.py          apply a trained adapter → z_treat / learned_magnitude
+  eval.py               CORUM remodelling / cluster transitions / HPA shift
+  direction_modules.py  coordinated remodelling modules + GO:BP enrichment
+  dropout.py            modality dropout (Stage 1)
+  pseudo_labels.py      Leiden/KMeans pseudo-labels for the structure loss
+docs/                   PIPELINE.md (manifest + worked run) + design/diagnosis notes
 ```
 
 ## Citation

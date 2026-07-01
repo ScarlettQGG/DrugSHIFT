@@ -22,9 +22,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .stage1_cache import Stage1Cache
-from .architecture import NeighborhoodAdapter
-from .training import load_aligned_epic
+from .cache import Stage1Cache
+from .model import NeighborhoodAdapter
+from .train import load_aligned_epic
 
 
 def _write_tsv(path: str, names, X: np.ndarray, prefix="d"):
