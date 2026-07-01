@@ -17,7 +17,7 @@ if TYPE_CHECKING:  # only for type hints — avoids a model<->cache import cycle
     from .stage1_bridge import Stage1Cache
 
 
-# ===================== Stage 1: MUSE multimodal model =====================
+# ===================== Stage 1: multimodal model =====================
 
 class _MLP(nn.Module):
     """Compact 2-layer MLP with optional dropout, used for encoders/decoders/fusion."""
