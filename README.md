@@ -1,4 +1,4 @@
-# DrugReMAP  — Drug-response Remapping onto a Multimodal Atlas of Proteins
+# DrugSHIFT  — Drug-induced Systematic High-throughput Inference of Functional Transitions
 
 A two-stage model for learning how a **perturbation remodels the protein
 interactome** of a cell, at the protein-complex level, from multimodal data.
