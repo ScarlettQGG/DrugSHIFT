@@ -99,14 +99,23 @@ this), `direction modules` (coordinated remodelling, via
 ## Install
 
 ```bash
-git clone git@github.com:ScarlettQGG/two-stage.git
-cd two-stage
-pip install -r requirements.txt        # numpy, pandas, scikit-learn, scipy, torch, requests
-                                       # python-igraph + leidenalg are optional (KMeans fallback)
+git clone git@github.com:ScarlettQGG/DrugSHIFT.git
+cd DrugSHIFT
+
+# Option A — install the package (adds the `joint_embedcmd.py` CLI to PATH)
+pip install .                 # core: numpy, pandas, scikit-learn, scipy, torch, requests
+pip install '.[leiden]'       # + Leiden community detection (else KMeans fallback)
+pip install '.[viz]'          # + matplotlib for two_stage.eval figures
+pip install '.[all]'          # everything, incl. the test suite
+
+# Option B — dev / pinned deps only
+pip install -r requirements.txt
 ```
 
 Tested with Python 3.10, PyTorch 2.2. No GPU required for the example sizes
 (~6k proteins).
+
+Run the unit tests with `pip install '.[test]' && pytest`.
 
 ---
 
