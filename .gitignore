@@ -21,6 +21,16 @@ outputs/
 runs/
 *.log
 
+# Packaging / build artefacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test / tooling caches
+.pytest_cache/
+.tox/
+
 # Environments
 .venv/
 venv/

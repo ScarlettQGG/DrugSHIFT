@@ -21,13 +21,23 @@ def _read(fname):
     return ''
 
 
-def _requirements():
-    reqs = []
-    for line in _read('requirements.txt').splitlines():
-        line = line.strip()
-        if line and not line.startswith('#'):
-            reqs.append(line)
-    return reqs
+# Core runtime dependencies (hard imports across joint_embed.py + two_stage).
+INSTALL_REQUIRES = [
+    'numpy>=1.24,<2.0',
+    'pandas>=2.0',
+    'scikit-learn>=1.2',
+    'scipy>=1.10',
+    'torch>=2.0',
+    'requests>=2.28',        # two_stage.direction_modules (Enrichr REST)
+]
+
+# Optional feature groups (lazy-imported; the code degrades gracefully without).
+EXTRAS_REQUIRE = {
+    'viz': ['matplotlib>=3.5'],                          # figures in two_stage.eval
+    'leiden': ['python-igraph>=0.10', 'leidenalg>=0.9'],  # cluster-aware kNN (else KMeans)
+    'test': ['pytest>=6.0'],
+}
+EXTRAS_REQUIRE['all'] = sorted({dep for deps in EXTRAS_REQUIRE.values() for dep in deps})
 
 
 setup(
@@ -43,7 +53,8 @@ setup(
     scripts=[
         'joint_embedcmd.py',
     ],
-    install_requires=_requirements(),
+    install_requires=INSTALL_REQUIRES,
+    extras_require=EXTRAS_REQUIRE,
     python_requires='>=3.8',
     classifiers=[
         'Programming Language :: Python :: 3',

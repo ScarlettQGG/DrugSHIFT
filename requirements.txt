@@ -8,7 +8,13 @@ torch>=2.0
 # direction_modules.py — GO:BP enrichment via the Enrichr/speedrichr REST API
 requests>=2.28
 
+# Optional — plotting in two_stage.eval (lazy-imported; only needed for figures).
+matplotlib>=3.5
+
 # Optional — Leiden community detection for cluster-aware kNN.
 # If absent, two_stage.pseudo_labels falls back to KMeans automatically.
 python-igraph>=0.10
 leidenalg>=0.9
+
+# Optional — test suite
+pytest>=6.0
