@@ -1,0 +1,16 @@
+# Runtime dependencies for adaptive_hidef.
+# Versions are those the pipeline was developed and validated against; nearby
+# versions are expected to work.
+numpy>=1.24,<2.0
+pandas>=2.0
+scikit-learn>=1.2
+scipy>=1.10
+matplotlib>=3.6
+
+# Community detection and hierarchy refinement.
+hidef==1.1.5
+cellmaps_generate_hierarchy==0.3.0
+
+# Pulled in transitively by hidef but listed for clarity.
+igraph>=0.10
+leidenalg>=0.9
