@@ -36,11 +36,30 @@ Per-replicate, per-condition co-elution PPI graphs (e.g. EPIC on SEC-MS)
   Layer 3 · Stage 2 adapter — neighbourhood-aware, coherence-weighted
                               delta over the static map, per perturbation
                       → z_treat.tsv, learned_magnitude.tsv, direction modules
+        │
+        ▼  adaptive-hidef  (adaptive_hidef/ — separate installable)
+  Stage 4 · Reference cell map — cosine PPI → low-k HiDeF → size-graded
+                                 persistence fusion → pruned containment hierarchy
+                      → reference hierarchy.cx2 (compartments → complexes)
+        │
+        ▼  differential cell map  (planned — not yet in this repo)
+  Stage 5 · Differential cell map — score how each reference assembly
+                                    remodels per perturbation (z_treat vs static)
+                      → per-condition differential hierarchy
 ```
 
-The two stages live in one flat `two_stage/` package and share code
-(`model.py`, `losses.py`, `train.py`). Train either stage or both with
-`python -m two_stage.train --stage {1,2,both}` (default both).
+The modelling stages (1–3) live in one flat `two_stage/` package and share
+code (`model.py`, `losses.py`, `train.py`); train either stage or both with
+`python -m two_stage.train --stage {1,2,both}` (default both). The cell-map
+stages (4–5) build the protein-complex **hierarchy** on top of the maps:
+Stage 4 (`adaptive_hidef`) turns the static map into a reference hierarchy;
+Stage 5 (planned) turns Stage 2's `z_treat` into per-perturbation differential
+maps.
+
+This repo is a **monorepo with two installable distributions**: `drugshift`
+(stages 1–3, this directory) and `adaptive_hidef` (stage 4, its own
+sub-directory + `pyproject.toml`, kept separate so its heavier hierarchy
+dependencies — `hidef`, `cellmaps_generate_hierarchy` — are optional).
 
 ---
 
@@ -110,6 +129,9 @@ pip install '.[all]'          # everything, incl. the test suite
 
 # Option B — dev / pinned deps only
 pip install -r requirements.txt
+
+# Stage 4 (reference cell map) is a separate distribution:
+pip install ./adaptive_hidef          # installs the `adaptive-hidef` CLI
 ```
 
 Tested with Python 3.10, PyTorch 2.2. No GPU required for the example sizes
@@ -121,7 +143,7 @@ Run the unit tests with `pip install '.[test]' && pytest`.
 
 ## Quick start
 
-The three layers run in sequence. Paths and modality inputs are described in
+The stages run in sequence. Paths and modality inputs are described in
 a `manifest.json` (see [`docs/PIPELINE.md`](docs/PIPELINE.md) for the schema
 and a full worked invocation).
 
@@ -150,6 +172,9 @@ python -m two_stage.train --stage both \
 python -m two_stage.inference --help          # writes z_treat.tsv, learned_magnitude.tsv
 python -m two_stage.eval --help               # CORUM remodelling, cluster transitions, HPA shift
 python -m two_stage.direction_modules --help  # coordinated remodelling modules + GO:BP
+
+# Stage 4 — build the reference cell-map hierarchy from the Stage 1 static map
+adaptive-hidef --help                         # cosine PPI → HiDeF → persistence fusion → hierarchy.cx2
 ```
 
 Always run a **negative control** condition (e.g. a held-out untreated
@@ -198,8 +223,17 @@ two_stage/
   direction_modules.py  coordinated remodelling modules + GO:BP enrichment
   dropout.py            modality dropout (Stage 1)
   pseudo_labels.py      Leiden/KMeans pseudo-labels for the structure loss
+
+adaptive_hidef/         Stage 4 · reference cell map — separate installable
+  pyproject.toml        distribution `adaptive_hidef`, `adaptive-hidef` CLI
+  adaptive_hidef/       ppi.py · hidef_runner.py · fusion.py · pipeline.py · cli.py
+
 docs/                   PIPELINE.md (manifest + worked run) + design/diagnosis notes
+tests/                  unit tests for the two_stage package + joint_embed CLI
 ```
+
+Stage 5 (differential cell map) is planned and not yet in this repo; it will
+consume the Stage 4 reference hierarchy plus Stage 2's per-condition `z_treat`.
 
 ## Citation
 
