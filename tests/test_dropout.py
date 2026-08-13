@@ -17,13 +17,24 @@ def test_no_dropout_when_p_zero():
 
 
 def test_min_keep_respected():
-    """Every sample must retain at least min_keep visible modalities."""
+    """A triggered sample keeps a random count in [min_keep, n_present - 1]."""
     torch.manual_seed(1)
     keep = random_modality_dropout(_present(), p_drop=1.0, min_keep=1)
     visible = torch.stack([keep[m] for m in MODS], dim=0).sum(0)  # (B,)
+    # all 4 present, p_drop=1 -> at least one dropped, at least min_keep visible
     assert (visible >= 1).all()
-    # with p_drop=1 and all 4 present, exactly one is dropped -> 3 visible
-    assert (visible == 3).all()
+    assert (visible <= 3).all()           # never all 4 (a modality was dropped)
+    # the count is variable now (not fixed at 3): several distinct sizes appear
+    assert visible.unique().numel() >= 2
+
+def test_min_keep_floor_with_two_present():
+    """min_keep=2 with 2 present -> nothing can be dropped, both stay visible."""
+    masks = {m: torch.zeros(B) for m in MODS}
+    masks["EPIC"] = torch.ones(B); masks["Sequence"] = torch.ones(B)
+    keep = random_modality_dropout(masks, p_drop=1.0, min_keep=2)
+    # effective visibility = dropout flag AND actually present
+    visible = torch.stack([keep[m] * masks[m] for m in MODS], dim=0).sum(0)
+    assert (visible == 2).all()
 
 
 def test_dropout_never_revives_absent_modality():

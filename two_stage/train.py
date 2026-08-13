@@ -245,6 +245,9 @@ def train_stage1(
     lambda_recon: float = 1.0,
     lambda_struct: float = 1.0,
     margin: float = 0.3,
+    weighting: str = "kendall",
+    mining: str = "hardest",
+    temperature: float = 0.1,
     p_drop: float = 0.3,
     dropout_min_keep: int = 1,
     pseudo_method: str = "leiden",
@@ -348,7 +351,8 @@ def train_stage1(
             lossd = total_loss(model, z, inputs_orig, masks_present, labels,
                                lambda_recon=lambda_recon,
                                lambda_struct=lambda_struct,
-                               margin=margin)
+                               margin=margin, weighting=weighting,
+                               mining=mining, temperature=temperature)
             optim.zero_grad(); lossd["total"].backward(); optim.step()
             losses_t.append(lossd["total"].item())
             losses_r.append(lossd["recon"].item())
@@ -666,6 +670,17 @@ def _build_parser() -> argparse.ArgumentParser:
     g1.add_argument("--lambda_recon", type=float, default=1.0)
     g1.add_argument("--lambda_struct", type=float, default=1.0)
     g1.add_argument("--margin", type=float, default=0.3)
+    g1.add_argument("--loss_weighting", default="kendall", choices=["kendall", "uniform"],
+                    help="Per-modality term weighting. 'kendall' learns log_sigma to "
+                         "auto-balance; 'uniform' enters every term at its raw value.")
+    g1.add_argument("--triplet_mining", default="hardest",
+                    choices=["hardest", "mean_pos", "supcon"],
+                    help="Structure-loss mining rule. 'hardest' is FaceNet semi-hard "
+                         "with the most distant positive; 'mean_pos' averages over the "
+                         "anchor's positives (robust to impure clusters); 'supcon' "
+                         "replaces the triplet with supervised contrastive.")
+    g1.add_argument("--triplet_temperature", type=float, default=0.1,
+                    help="Softmax temperature, used only by --triplet_mining supcon.")
     g1.add_argument("--p_drop", type=float, default=0.3)
     g1.add_argument("--dropout_min_keep", type=int, default=1)
     g1.add_argument("--pseudo_method", default="leiden", choices=["leiden", "kmeans"])
@@ -738,7 +753,9 @@ def main():
             n_epochs=args.s1_epochs, batch_size=args.s1_batch_size,
             learn_rate=args.s1_lr, weight_decay=args.s1_wd,
             lambda_recon=args.lambda_recon, lambda_struct=args.lambda_struct,
-            margin=args.margin, p_drop=args.p_drop, dropout_min_keep=args.dropout_min_keep,
+            margin=args.margin, weighting=args.loss_weighting,
+            mining=args.triplet_mining, temperature=args.triplet_temperature,
+            p_drop=args.p_drop, dropout_min_keep=args.dropout_min_keep,
             pseudo_method=args.pseudo_method, pseudo_kmeans_k=args.pseudo_kmeans_k,
             pseudo_knn_k=args.pseudo_knn_k, pseudo_resolution=args.pseudo_resolution,
             seed=args.seed, device=args.device,

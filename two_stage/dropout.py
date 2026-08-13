@@ -84,17 +84,27 @@ def random_modality_dropout(
     if not do_drop.any():
         return keep
 
-    # Among present modalities, pick ONE uniformly at random per sample.
-    # Trick: assign random scores in [0, 1) to present (m, sample) pairs
-    # and -1 to absent ones; argmax over modalities is then uniformly
-    # distributed across present modalities.
+    # How many to leave visible: uniform over [min_keep, n_present - 1] for the
+    # triggered samples, all of them for the rest. do_drop already guarantees
+    # n_present > min_keep, so the range is non-empty and one modality is lost.
+    span = n_present - min_keep
+    n_keep = torch.where(
+        do_drop,
+        min_keep + torch.floor(torch.rand(B, device=device) * span),
+        n_present,
+    )
+
+    # Which ones to keep: random scores over present (m, sample) pairs, -1 for
+    # absent ones so they always rank last, then keep the top n_keep by score.
     rand_scores = torch.rand(n_mod, B, device=device)
     rand_scores = rand_scores.masked_fill(M < 0.5, -1.0)
-    chosen_mod = rand_scores.argmax(dim=0)  # (B,) modality index to drop
+    order = rand_scores.argsort(dim=0, descending=True)
+    rank = torch.empty_like(order)
+    rank.scatter_(0, order, torch.arange(n_mod, device=device).unsqueeze(1).expand(n_mod, B))
 
-    keep_stack = torch.ones(n_mod, B, device=device)
-    sample_idx = torch.arange(B, device=device)
-    keep_stack[chosen_mod[do_drop], sample_idx[do_drop]] = 0.0
+    # absent modalities keep a 1, as they did before: their input and mask are
+    # already zero, so the flag only ever encodes the dropout decision
+    keep_stack = ((rank < n_keep.unsqueeze(0)) | (M < 0.5)).float()
 
     return {m: keep_stack[i] for i, m in enumerate(modalities)}
 
