@@ -42,6 +42,7 @@ from .stage1_bridge import Stage1Cache, load_epic_per_condition, _align
 def _read_tsv(path: str) -> Tuple[List[str], np.ndarray]:
     """First column = protein name, remaining = float features."""
     proteins, rows = [], []
+    n_skipped = 0
     with open(path) as f:
         header = f.readline()
         for ln in f:
@@ -49,9 +50,21 @@ def _read_tsv(path: str) -> Tuple[List[str], np.ndarray]:
             try:
                 vec = [float(x) for x in p[1:]]
             except ValueError:
+                n_skipped += 1
                 continue
             proteins.append(p[0])
             rows.append(vec)
+    # A truncated file parses to no rows, to a short last row, or to lines that are not
+    # numbers at all. Left alone the first becomes an empty array whose missing second
+    # axis only surfaces much later as a shape error, and the second silently trains on
+    # a ragged matrix; both are worth naming the file for.
+    if not rows:
+        raise ValueError(f"no parseable rows in {path} ({n_skipped} lines skipped) -- "
+                         f"the file is empty or truncated")
+    ragged = sum(1 for r in rows if len(r) != len(rows[0]))
+    if n_skipped or ragged:
+        raise ValueError(f"{path} is truncated or malformed -- {n_skipped} unparseable "
+                         f"lines, {ragged} rows of the wrong width")
     return proteins, np.asarray(rows, dtype=np.float32)
 
 
@@ -245,7 +258,10 @@ def train_stage1(
     lambda_recon: float = 1.0,
     lambda_struct: float = 1.0,
     margin: float = 0.3,
-    p_drop: float = 0.3,
+    weighting: str = "kendall",
+    mining: str = "hardest",
+    temperature: float = 0.1,
+    p_drop: float = 0.75,
     dropout_min_keep: int = 1,
     pseudo_method: str = "leiden",
     pseudo_kmeans_k: int = 50,
@@ -313,7 +329,8 @@ def train_stage1(
     with open(log_path, "w") as f:
         f.write("epoch\ttotal\trecon\tstruct\tdrop_frac\n")
     t0 = time.time()
-    print(f"[muse] modality dropout: p_drop={p_drop}  min_keep={dropout_min_keep}")
+    print(f"[muse] modality dropout: p_drop={p_drop}  min_keep={dropout_min_keep}  "
+          f"loss weighting: {weighting}  triplet mining: {mining}")
     for ep in range(n_epochs):
         model.train()
         losses_t, losses_r, losses_s, drop_fracs = [], [], [], []
@@ -348,7 +365,10 @@ def train_stage1(
             lossd = total_loss(model, z, inputs_orig, masks_present, labels,
                                lambda_recon=lambda_recon,
                                lambda_struct=lambda_struct,
-                               margin=margin)
+                               margin=margin,
+                               weighting=weighting,
+                               mining=mining,
+                               temperature=temperature)
             optim.zero_grad(); lossd["total"].backward(); optim.step()
             losses_t.append(lossd["total"].item())
             losses_r.append(lossd["recon"].item())
@@ -406,8 +426,9 @@ def train_stage1(
 # ───────────────────────────────────────────────────────────────────────────
 
 def load_aligned_epic(manifest_path: str, epic_name: str, universe,
-                      condition: str) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Return (EPIC_ctrl, EPIC_treat, mask_treat) aligned to `universe`."""
+                      condition: str) -> Tuple[torch.Tensor, torch.Tensor,
+                                               torch.Tensor, torch.Tensor]:
+    """Return (EPIC_ctrl, EPIC_treat, mask_treat, mask_ctrl) aligned to `universe`."""
     streams = load_epic_per_condition(manifest_path, epic_name)
     if "control" not in streams:
         raise RuntimeError(f"No 'control' EPIC stream in {manifest_path}")
@@ -421,11 +442,16 @@ def load_aligned_epic(manifest_path: str, epic_name: str, universe,
                            f"({X_ctrl.shape[1]} vs {X_treat.shape[1]})")
     Xc, mc = _align(universe, p_ctrl, X_ctrl)
     Xt, mt = _align(universe, p_treat, X_treat)
-    # Centre: ctrl is the reference; if either is missing, mask the protein
-    # for L_epic_recon but keep it in the batch (it can still get a δ̂ from
-    # neighbours).
+    # BOTH masks are returned. `_align` zero-fills absent proteins, so on a
+    # protein measured on only one side `treat − ctrl` collapses to ±(the
+    # present side) — an absolute embedding coordinate masquerading as a
+    # differential, and a large one. Callers must gate the delta on
+    # mask_treat * mask_ctrl; the protein stays in the batch and can still be
+    # imputed from its neighbours' deltas.
     mask_treat = (mt > 0.5).astype(np.float32)
-    return (torch.from_numpy(Xc), torch.from_numpy(Xt), torch.from_numpy(mask_treat))
+    mask_ctrl  = (mc > 0.5).astype(np.float32)
+    return (torch.from_numpy(Xc), torch.from_numpy(Xt),
+            torch.from_numpy(mask_treat), torch.from_numpy(mask_ctrl))
 
 
 def gather_neighbour_delta(delta_raw_all: torch.Tensor,
@@ -513,14 +539,30 @@ def train_adapter(
 
     # ---- 2) Load EPIC ctrl + treat aligned to cache.proteins ----
     print(f"[train] loading EPIC for condition={condition!r}")
-    EPIC_ctrl, EPIC_treat, mask_treat = load_aligned_epic(
+    EPIC_ctrl, EPIC_treat, mask_treat, mask_ctrl = load_aligned_epic(
         manifest_path, cache.epic_name, cache.proteins, condition)
     EPIC_ctrl  = EPIC_ctrl.to(device)
     EPIC_treat = EPIC_treat.to(device)
     mask_treat = mask_treat.to(device)
-    delta_raw_all = (EPIC_treat - EPIC_ctrl)                              # (N, d_epic)
-    n_with_treat = int(mask_treat.sum().item())
-    print(f"[train] EPIC: {n_with_treat}/{cache.N} proteins have treated profile")
+    mask_ctrl  = mask_ctrl.to(device)
+    # A differential exists only where BOTH sides were measured. Everywhere else
+    # the delta is zeroed rather than left as ±(the present side); those proteins
+    # are routed to the neighbour-only path (treated present) or to no movement
+    # at all (treated absent). See NeighborhoodAdapter.forward_with_neighbour_delta.
+    mask_obs = mask_treat * mask_ctrl
+    delta_raw_all = (EPIC_treat - EPIC_ctrl) * mask_obs.unsqueeze(-1)      # (N, d_epic)
+    # Neighbours without an observable differential carry δ_raw = 0, which reads
+    # as "did not move" rather than "unknown" — drop those edges instead.
+    obs_mask_neigh = mask_obs[cache.knn_idx]                              # (N, k)
+    n_obs = int(mask_obs.sum().item())
+    n_imp = int((mask_treat * (1.0 - mask_ctrl)).sum().item())
+    n_non = cache.N - n_obs - n_imp
+    print(f"[train] EPIC coverage over {cache.N} static proteins: "
+          f"observed(treat+ctrl)={n_obs}  imputed(treat only)={n_imp}  "
+          f"unsupported(no treat)={n_non}")
+    print(f"[train] mean live neighbours per protein: "
+          f"{float(obs_mask_neigh.sum(dim=1).float().mean().item()):.1f}/"
+          f"{cache.k_neighbours}")
 
     # ---- 3) Build adapter ----
     adapter = NeighborhoodAdapter(
@@ -564,6 +606,9 @@ def train_adapter(
             delta_raw_i=delta_raw_i,
             delta_raw_neigh=delta_raw_neigh,
             cond_id=cond_ids,
+            mask_treat_i=mask_treat,
+            mask_ctrl_i=mask_ctrl,
+            obs_mask_neigh=obs_mask_neigh,
         )
 
         L, parts = compose_loss(
@@ -571,6 +616,7 @@ def train_adapter(
             epic_treat_i=EPIC_treat,
             epic_treat_mask_i=mask_treat,
             idx=all_idx, weights=weights,
+            delta_obs_mask_i=mask_obs,
         )
 
         opt.zero_grad(set_to_none=True)
@@ -666,7 +712,23 @@ def _build_parser() -> argparse.ArgumentParser:
     g1.add_argument("--lambda_recon", type=float, default=1.0)
     g1.add_argument("--lambda_struct", type=float, default=1.0)
     g1.add_argument("--margin", type=float, default=0.3)
-    g1.add_argument("--p_drop", type=float, default=0.3)
+    g1.add_argument("--loss_weighting", default="kendall", choices=["kendall", "uniform"],
+                    help="How the per-modality recon/struct terms are combined. "
+                         "'kendall' learns log_sigma per term; 'uniform' gives every "
+                         "modality weight 1.")
+    g1.add_argument("--triplet_mining", default="hardest",
+                    choices=["hardest", "mean_pos", "supcon"],
+                    help="Structure-loss mining rule. 'hardest' is FaceNet semi-hard "
+                         "with the most distant positive; 'mean_pos' averages over the "
+                         "anchor's positives instead; 'supcon' replaces the triplet with "
+                         "supervised contrastive and ignores --margin.")
+    g1.add_argument("--triplet_temperature", type=float, default=0.1,
+                    help="Softmax temperature, used only by --triplet_mining supcon.")
+    g1.add_argument("--p_drop", type=float, default=0.75,
+                    help="Per-protein probability of hiding at least one modality from "
+                         "the encoder. Higher builds a stronger map but trains the "
+                         "modalities to be interchangeable: by 0.9 a modality ablation "
+                         "can no longer recover the fourth one's marginal contribution.")
     g1.add_argument("--dropout_min_keep", type=int, default=1)
     g1.add_argument("--pseudo_method", default="leiden", choices=["leiden", "kmeans"])
     g1.add_argument("--pseudo_knn_k", type=int, default=15)
@@ -738,7 +800,9 @@ def main():
             n_epochs=args.s1_epochs, batch_size=args.s1_batch_size,
             learn_rate=args.s1_lr, weight_decay=args.s1_wd,
             lambda_recon=args.lambda_recon, lambda_struct=args.lambda_struct,
-            margin=args.margin, p_drop=args.p_drop, dropout_min_keep=args.dropout_min_keep,
+            margin=args.margin, weighting=args.loss_weighting,
+            mining=args.triplet_mining, temperature=args.triplet_temperature,
+            p_drop=args.p_drop, dropout_min_keep=args.dropout_min_keep,
             pseudo_method=args.pseudo_method, pseudo_kmeans_k=args.pseudo_kmeans_k,
             pseudo_knn_k=args.pseudo_knn_k, pseudo_resolution=args.pseudo_resolution,
             seed=args.seed, device=args.device,

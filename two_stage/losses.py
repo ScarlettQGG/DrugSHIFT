@@ -16,6 +16,7 @@ weight that term -> equalises gradient contribution across modalities).
 from __future__ import annotations
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -70,49 +71,65 @@ def semi_hard_triplet(
     z: torch.Tensor,                # (N, d) — only valid anchors (already filtered)
     labels: torch.Tensor,           # (N,) int cluster ids
     margin: float = 0.3,
+    mining: str = "hardest",
+    temperature: float = 0.1,
     eps: float = 1e-6,
 ) -> Optional[torch.Tensor]:
-    """In-batch semi-hard triplet on cosine distance.
+    """In-batch structure loss on cosine distance, under one of three mining rules.
 
-    For each anchor i with at least one positive (same label, different sample)
-    and at least one negative (different label):
-      d_pos[i] = max_j {d(i,j) : label_j == label_i, j != i}     (hardest positive)
-      d_neg[i] = min_j {d(i,j) : d(i,j) > d_pos[i], label_j != label_i}
-                 — semi-hard negative; fallback to argmin negative if none exists.
-    Returns mean of max(0, d_pos - d_neg + margin) over valid anchors, or None
-    if no anchor has the required positives+negatives in this batch.
+    An anchor counts only if it has at least one positive (same pseudo-label, different
+    sample) and one negative in the batch; returns None when no anchor qualifies.
+
+    hardest   FaceNet semi-hard, the original: d_pos is the *most distant* positive and
+              d_neg the nearest negative beyond it (hardest negative if none is). With
+              pseudo-labels whose clusters are large and impure, the most distant
+              positive is a mislabelled member, so the anchor's target is set by noise.
+    mean_pos  d_pos is the mean positive distance, so one far member of a blobby cluster
+              can no longer set the target; the negative is still mined semi-hard.
+    supcon    Supervised contrastive (Khosla 2020): every positive is pulled through one
+              temperature-scaled softmax over all other samples, so no single positive
+              dominates and no negative has to be picked at all. `margin` is unused.
     """
     N = z.shape[0]
     if N < 3:
         return None
     Z = F.normalize(z, dim=-1)
-    D = 1.0 - Z @ Z.T                           # cosine distance (N, N), in [0, 2]
+    sim = Z @ Z.T                               # cosine similarity (N, N), in [-1, 1]
     same = labels.unsqueeze(0) == labels.unsqueeze(1)
     diag = torch.eye(N, dtype=torch.bool, device=z.device)
     pos_mask = same & ~diag
     neg_mask = ~same & ~diag
 
-    has_pos = pos_mask.any(dim=-1)
-    has_neg = neg_mask.any(dim=-1)
-    valid = has_pos & has_neg
+    valid = pos_mask.any(dim=-1) & neg_mask.any(dim=-1)
     if valid.sum() == 0:
         return None
 
-    # Hardest positive per anchor (max over positives)
-    D_pos = D.masked_fill(~pos_mask, float("-inf"))
-    d_pos, _ = D_pos.max(dim=-1)
-    # Semi-hard negative: smallest neg distance strictly greater than d_pos
+    if mining == "supcon":
+        # mean over the anchor's positives of -log p(positive), p a softmax over every
+        # other sample. Divided by log(N) so the term starts near 1 like the triplet
+        # rules do -- the scales have to be comparable for --loss_weighting uniform,
+        # which puts every loss term on the same footing.
+        logits = (sim / temperature).masked_fill(diag, float("-inf"))
+        log_prob = logits - torch.logsumexp(logits, dim=-1, keepdim=True)
+        # the excluded self entry is -inf, so it has to be masked to zero rather than
+        # multiplied by the mask -- inf * 0 is NaN and would poison the whole sum
+        mean_log_prob = (log_prob.masked_fill(~pos_mask, 0.0).sum(dim=-1)
+                         / pos_mask.sum(dim=-1).clamp_min(1))
+        return -mean_log_prob[valid].mean() / math.log(N)
+
+    D = 1.0 - sim                               # cosine distance, in [0, 2]
+    if mining == "mean_pos":
+        d_pos = (D * pos_mask).sum(dim=-1) / pos_mask.sum(dim=-1).clamp_min(1)
+    else:
+        d_pos, _ = D.masked_fill(~pos_mask, float("-inf")).max(dim=-1)
+
+    # semi-hard negative: nearest negative still farther than d_pos, hardest if none is
     D_neg = D.masked_fill(~neg_mask, float("inf"))
-    sh_mask = D_neg > d_pos.unsqueeze(-1)
-    D_sh = D_neg.masked_fill(~sh_mask, float("inf"))
-    d_neg_sh, _ = D_sh.min(dim=-1)
-    # Fallback: when no semi-hard exists, use hardest (smallest) negative
+    d_neg_sh, _ = D_neg.masked_fill(D_neg <= d_pos.unsqueeze(-1), float("inf")).min(dim=-1)
     d_neg_h, _ = D_neg.min(dim=-1)
     d_neg = torch.where(torch.isfinite(d_neg_sh), d_neg_sh, d_neg_h)
 
-    # Apply only on valid anchors
-    loss_vec = F.relu(d_pos[valid] - d_neg[valid] + margin)
-    return loss_vec.mean()
+    return F.relu(d_pos[valid] - d_neg[valid] + margin).mean()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -126,6 +143,8 @@ def structure_triplet_loss(
     log_sigma_struct: torch.Tensor,            # (M,) Kendall params
     modality_order: list,
     margin: float = 0.3,
+    mining: str = "hardest",
+    temperature: float = 0.1,
 ) -> torch.Tensor:
     """Kendall-weighted sum over modalities of within-modality semi-hard triplets.
 
@@ -143,7 +162,8 @@ def structure_triplet_loss(
         unique, counts = torch.unique(lab, return_counts=True)
         if unique.numel() < 2 or counts.max() < 2:
             continue
-        l = semi_hard_triplet(zi, lab, margin=margin)
+        l = semi_hard_triplet(zi, lab, margin=margin, mining=mining,
+                              temperature=temperature)
         if l is None:
             continue
         w = torch.exp(-log_sigma_struct[i])
@@ -166,34 +186,62 @@ def total_loss(
     lambda_recon: float = 1.0,
     lambda_struct: float = 1.0,
     margin: float = 0.3,
+    weighting: str = "kendall",
+    mining: str = "hardest",
+    temperature: float = 0.1,
 ) -> Dict[str, torch.Tensor]:
     """Compose total loss = λ_recon * recon + λ_struct * structure.
     Returns a dict of scalar tensors for logging."""
+    # 'uniform' substitutes zeroed log_sigma for the learned ones: exp(-0) = 1 for every
+    # modality and the 0.5*log_sigma bias vanishes, so each term enters at its raw value
+    # and the Kendall parameters receive no gradient. Kendall's rule settles at
+    # w = 0.5/L, which hands the largest weight to whichever modality is easiest to
+    # reconstruct rather than to whichever carries the most information.
+    log_recon, log_struct = model.log_sigma_recon, model.log_sigma_struct
+    if weighting == "uniform":
+        log_recon = torch.zeros_like(log_recon)
+        log_struct = torch.zeros_like(log_struct)
     recon = masked_recon_loss(z, model.decoders, inputs, masks,
-                              model.log_sigma_recon, model.modality_names)
+                              log_recon, model.modality_names)
     struct = structure_triplet_loss(z, pseudo_labels, masks,
-                                    model.log_sigma_struct,
-                                    model.modality_names, margin=margin)
+                                    log_struct,
+                                    model.modality_names, margin=margin,
+                                    mining=mining, temperature=temperature)
     total = lambda_recon * recon + lambda_struct * struct
     return {"total": total, "recon": recon, "struct": struct}
 
 # ===================== Stage 2 losses =====================
 
-def kendall_mse(pred: torch.Tensor, target: torch.Tensor, log_sigma2: torch.Tensor
-                ) -> torch.Tensor:
-    """Heteroscedastic regression: (1/σ²)·MSE + log σ²   (scalar)."""
+def kendall_mse(pred: torch.Tensor, target: torch.Tensor, log_sigma2: torch.Tensor,
+                mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    """Heteroscedastic regression: (1/σ²)·MSE + log σ²   (scalar).
+
+    `mask` (B,) restricts the average to rows whose target is a real
+    observation; without it every row contributes.
+    """
     mse = (pred - target).pow(2).mean(dim=-1)
-    return ((-log_sigma2).exp() * mse + log_sigma2).mean()
+    per_row = (-log_sigma2).exp() * mse + log_sigma2
+    if mask is None:
+        return per_row.mean()
+    m = mask.float()
+    return (per_row * m).sum() / m.sum().clamp_min(1.0)
 
 
 def loss_loo(delta_hat: torch.Tensor,
              delta_raw_proj: torch.Tensor,
-             log_sigma2_pred: torch.Tensor) -> torch.Tensor:
+             log_sigma2_pred: torch.Tensor,
+             mask: Optional[torch.Tensor] = None) -> torch.Tensor:
     """L_LOO: neighbour-only prediction matches the centre's observed delta."""
     # We supervise δ̂ (the neighbour-only prediction) on δ_raw_proj (the
     # projected observation). The neighbour-only network never sees δ_raw_i in
     # its receptive field, so identity is structurally impossible.
-    return kendall_mse(delta_hat, delta_raw_proj.detach(), log_sigma2_pred)
+    #
+    # `mask` must exclude proteins without an observable differential. Their
+    # δ_raw_proj is not an observation — it is whatever the residual MLP emits
+    # for a zero delta — so supervising δ̂ on it teaches the consensus head to
+    # reproduce an artefact, and that damage reaches the fully-measured
+    # proteins too, since δ̂ is what their coherence gate is scored against.
+    return kendall_mse(delta_hat, delta_raw_proj.detach(), log_sigma2_pred, mask=mask)
 
 
 def loss_decoder_stable(decoder, z_treat: torch.Tensor, z_ref: torch.Tensor
@@ -325,6 +373,7 @@ def compose_loss(adapter, cache, forward_out: Dict[str, torch.Tensor],
                  epic_treat_mask_i: Optional[torch.Tensor],
                  idx: torch.Tensor,
                  weights: LossWeights,
+                 delta_obs_mask_i: Optional[torch.Tensor] = None,
                  ) -> Tuple[torch.Tensor, Dict[str, float]]:
     """Compose the multi-loss for a batch.
 
@@ -333,6 +382,9 @@ def compose_loss(adapter, cache, forward_out: Dict[str, torch.Tensor],
     epic_treat_mask_i   : presence mask for EPIC_treat (B,)
     idx                 : centre indices (B,)
     weights             : LossWeights
+    delta_obs_mask_i    : (B,) 1 where BOTH EPIC sides were measured, i.e. where
+                          δ_raw_proj is a real observation and may be used as the
+                          L_LOO target. None → every protein supervises L_LOO.
     """
     device = idx.device
     z_treat   = forward_out["z_treat"]
@@ -341,7 +393,8 @@ def compose_loss(adapter, cache, forward_out: Dict[str, torch.Tensor],
     log_s2    = forward_out["log_sigma2_pred"]
 
     # 1) L_LOO
-    L_LOO = loss_loo(delta_hat, forward_out["delta_raw_proj"], log_s2)
+    L_LOO = loss_loo(delta_hat, forward_out["delta_raw_proj"], log_s2,
+                     mask=delta_obs_mask_i)
 
     # 2) L_seq_stable
     if cache.D_seq is not None:

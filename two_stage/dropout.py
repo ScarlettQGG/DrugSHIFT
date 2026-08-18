@@ -14,11 +14,21 @@ modalities from the remaining ones. This trains:
      more than "which modalities were observed."
 
 Implementation choice: each *sample* (protein) is independently considered
-for dropout with probability `p_drop`. When triggered, ONE currently-present
-modality is hidden, chosen uniformly at random among the modalities that
-*are* present for that sample. The `min_keep` floor (default 1) prevents
-hiding everything for a sample that has few modalities to begin with —
-notably the Sequence-only proteins are left alone.
+for dropout with probability `p_drop`. When triggered, the number of
+modalities left visible is drawn uniformly from `[min_keep, n_present - 1]`
+and that many are kept, chosen uniformly at random among the modalities that
+*are* present for that sample. So a protein with all four modalities is
+sometimes shown with three, sometimes two, sometimes one — the upper end of
+the range is what ties the sparse corners of the map to the well-observed
+core. Drawing up to `n_present - 1` means a triggered sample always loses at
+least one modality. The `min_keep` floor (default 1) prevents hiding
+everything for a sample that has few modalities to begin with — notably the
+Sequence-only proteins are left alone.
+
+Hiding exactly one modality per step is not enough: a four-modality protein
+would then only ever be seen as three, its `z` never held accountable for
+matching the one- or two-modality view, and proteins that are natively
+one- or two-modality end up on their own manifold rather than the shared one.
 
 Usage in the training loop:
 
@@ -48,9 +58,9 @@ def random_modality_dropout(
         Original data presence mask — 1 if the modality was measured for the
         sample, 0 if it's structurally missing in the data.
     p_drop : float, default 0.3
-        Per-sample probability of triggering dropout. With 4 modalities and
-        a sample where all four are present, this is also the probability
-        that exactly one is hidden this step.
+        Per-sample probability of triggering dropout — i.e. of hiding at
+        least one present modality this step. How many are hidden is then
+        uniform over every subset size from `min_keep` up to `n_present - 1`.
     min_keep : int, default 1
         Floor on the number of modalities that must remain visible per sample.
         With min_keep=1, a sample with only one present modality is never
@@ -84,17 +94,27 @@ def random_modality_dropout(
     if not do_drop.any():
         return keep
 
-    # Among present modalities, pick ONE uniformly at random per sample.
-    # Trick: assign random scores in [0, 1) to present (m, sample) pairs
-    # and -1 to absent ones; argmax over modalities is then uniformly
-    # distributed across present modalities.
+    # How many to leave visible: uniform over [min_keep, n_present - 1] for the
+    # triggered samples, all of them for the rest. do_drop already guarantees
+    # n_present > min_keep, so the range is non-empty and one modality is lost.
+    span = n_present - min_keep
+    n_keep = torch.where(
+        do_drop,
+        min_keep + torch.floor(torch.rand(B, device=device) * span),
+        n_present,
+    )
+
+    # Which ones to keep: random scores over present (m, sample) pairs, -1 for
+    # absent ones so they always rank last, then keep the top n_keep by score.
     rand_scores = torch.rand(n_mod, B, device=device)
     rand_scores = rand_scores.masked_fill(M < 0.5, -1.0)
-    chosen_mod = rand_scores.argmax(dim=0)  # (B,) modality index to drop
+    order = rand_scores.argsort(dim=0, descending=True)
+    rank = torch.empty_like(order)
+    rank.scatter_(0, order, torch.arange(n_mod, device=device).unsqueeze(1).expand(n_mod, B))
 
-    keep_stack = torch.ones(n_mod, B, device=device)
-    sample_idx = torch.arange(B, device=device)
-    keep_stack[chosen_mod[do_drop], sample_idx[do_drop]] = 0.0
+    # absent modalities keep a 1, as they did before: their input and mask are
+    # already zero, so the flag only ever encodes the dropout decision
+    keep_stack = ((rank < n_keep.unsqueeze(0)) | (M < 0.5)).float()
 
     return {m: keep_stack[i] for i, m in enumerate(modalities)}
 

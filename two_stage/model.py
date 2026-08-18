@@ -441,6 +441,9 @@ class NeighborhoodAdapter(nn.Module):
                                      delta_raw_i: torch.Tensor,
                                      delta_raw_neigh: torch.Tensor,
                                      cond_id: torch.Tensor,
+                                     mask_treat_i: Optional[torch.Tensor] = None,
+                                     mask_ctrl_i: Optional[torch.Tensor] = None,
+                                     obs_mask_neigh: Optional[torch.Tensor] = None,
                                      ) -> Dict[str, torch.Tensor]:
         """
         Forward pass when the training/inference loop has already prepared the
@@ -452,9 +455,38 @@ class NeighborhoodAdapter(nn.Module):
         delta_raw_i      : (B, d_epic)      = epic_treat_i − epic_ctrl_i  (precomputed)
         delta_raw_neigh  : (B, k, d_epic)   = neighbours' deltas, already gathered
         cond_id          : (B,)
+        mask_treat_i     : (B,)             1 where the treated EPIC profile exists
+        mask_ctrl_i      : (B,)             1 where the control EPIC profile exists
+        obs_mask_neigh   : (B, k)           1 where the NEIGHBOUR has both sides
+
+        Coverage routing (active only when the masks are supplied — omit them
+        and every protein takes the observed path, i.e. the historical
+        behaviour). The EPIC modality does not cover the whole static map, so a
+        protein falls into one of three classes:
+
+            treated + control   →  observed: coherence-weighted differential
+            treated only        →  imputed:  neighbour prediction δ̂ alone. δ̂ is
+                                   leave-one-out by construction, so this is a
+                                   genuine estimate rather than a fabrication.
+            no treated profile  →  unsupported: δ = 0, magnitude 0. Nothing about
+                                   this protein under treatment was measured.
+
+        `delta_status` in the returned dict records the branch taken per protein
+        (2 = observed, 1 = imputed, 0 = unsupported).
         """
         device = idx.device
         cache  = self.cache
+
+        # --- coverage routing masks ---
+        if mask_treat_i is not None and mask_ctrl_i is not None:
+            mt  = mask_treat_i.to(device).float()
+            mc  = mask_ctrl_i.to(device).float()
+            obs = mt * mc                          # differential is observable
+            imp = mt * (1.0 - mc)                  # treated only → impute from neighbours
+        else:
+            obs = torch.ones(idx.shape[0], device=device)
+            imp = torch.zeros(idx.shape[0], device=device)
+        delta_status = 2.0 * obs + imp
 
         # --- per-protein static features ---
         z      = cache.z[idx].to(device)
@@ -467,6 +499,12 @@ class NeighborhoodAdapter(nn.Module):
         # --- (b) neighbour encoding (LEAVE-ONE-OUT) ---
         n_idx = cache.knn_idx[idx].to(device)               # (B, k)
         n_w   = cache.knn_w[idx].to(device)
+        if obs_mask_neigh is not None:
+            # A neighbour with no observable differential carries δ_raw = 0, which
+            # the delta encoder reads as "did not move" rather than "unknown" —
+            # that biases the consensus toward zero. Drop the edge instead; the
+            # attention renormalises over whatever live neighbours remain.
+            n_w = n_w * obs_mask_neigh.to(device).float()
         B, k, d_ep = delta_raw_neigh.shape
         # gather neighbour h_m
         h_neigh = self._gather_neighbour_h(n_idx)            # list of (B, k, d_h)
@@ -488,7 +526,12 @@ class NeighborhoodAdapter(nn.Module):
         with torch.no_grad():
             base_treat = cache.E_EPIC(epic_treat_i)
             base_ctrl  = cache.E_EPIC(epic_ctrl_i)
-            delta_baseline = base_treat - base_ctrl          # in h-space, NOT z-space
+            # Gate on `obs` for the same reason the raw delta is gated: where one
+            # side is absent its matrix row is zero-filled, so this difference is
+            # E_EPIC(present) − E_EPIC(0) — the encoder's response to an absolute
+            # coordinate, not to a change. Zeroing delta_raw_i alone would not
+            # close this path, since it reads the raw matrices directly.
+            delta_baseline = (base_treat - base_ctrl) * obs.unsqueeze(-1)
         # The frozen baseline lives in per-modality h-space (d_h), not z-space (d_z).
         # We map it to z-space via a fixed linear cast aligned with the cache geometry:
         # the simplest faithful choice is just zero-pad / project — we let the residual
@@ -526,21 +569,32 @@ class NeighborhoodAdapter(nn.Module):
             raw_t = _tang(delta_raw_proj)                     # tangential (drift RETAINED)
             hat_t = _tang(delta_hat)
             if self.drift_remove:
-                raw_c = raw_t - raw_t.mean(0, keepdim=True)   # drift REMOVED (complex-specific)
-                hat_c = hat_t - hat_t.mean(0, keepdim=True)
+                # Estimate the global drift from proteins that actually have an
+                # observed differential — unobserved rows contribute a constant
+                # artefact (residual_proj of a zero delta) that would bias it.
+                n_obs = obs.sum().clamp_min(1.0)
+                raw_mu = (raw_t * obs.unsqueeze(-1)).sum(0, keepdim=True) / n_obs
+                hat_mu = (hat_t * obs.unsqueeze(-1)).sum(0, keepdim=True) / n_obs
+                raw_c = raw_t - raw_mu                         # drift REMOVED (complex-specific)
+                hat_c = hat_t - hat_mu
             else:
                 raw_c, hat_c = raw_t, hat_t
             # coherence (signal-vs-noise gate) from the drift-removed (complex-specific)
             # deltas so the global drift doesn't make everything look coherent.
+            # Undefined without an observation → 0 ("nothing agreed with").
             coh = F.cosine_similarity(raw_c, hat_c, dim=-1)
             w = coh.clamp_min(0.0)                             # gate ∈ [0,1]
-            coherence = coh
+            coherence = coh * obs
             # MOVEMENT (z_treat → direction-modules): coherence-gated, but on the
             # drift-RETAINED direction so the strong complex modules survive.
-            delta_comb = w.unsqueeze(-1) * raw_t
+            # Imputed proteins take δ̂ ungated — there is no observation to agree
+            # with, and δ̂ is already neighbour-only. Unsupported proteins get 0.
+            delta_comb = (obs.unsqueeze(-1) * (w.unsqueeze(-1) * raw_t)
+                          + imp.unsqueeze(-1) * hat_t)
             # MAGNITUDE (per-protein differential score → stability/ranking): on the
             # drift-REMOVED delta so it's sparse + noise-decoupled (stable population).
-            learned_magnitude = w * raw_c.norm(dim=-1)
+            learned_magnitude = (obs * w * raw_c.norm(dim=-1)
+                                 + imp * hat_c.norm(dim=-1))
             z_treat = z + delta_comb
             if self.spherical:
                 z_treat = z_treat / (z_treat.norm(dim=-1, keepdim=True) + 1e-8)
@@ -552,6 +606,7 @@ class NeighborhoodAdapter(nn.Module):
                 "m_raw_target": m_raw_target, "delta_baseline_z": delta_baseline_z,
                 "delta_residual": delta_residual, "log_sigma2_pred": log_sigma2_pred,
                 "sigma2_pred": sigma2_pred, "sigma2_raw": sigma2_raw, "alpha": alpha,
+                "delta_status": delta_status,
             }
 
         # --- factorized δ = m(p)·u(p) ------------------------------------
@@ -596,6 +651,12 @@ class NeighborhoodAdapter(nn.Module):
                 gate = gate.pow(self.coherence_gate_gamma)
             delta_comb = gate.unsqueeze(-1) * delta_comb
 
+        # --- coverage routing (same three-way split as the unified branch) ---
+        delta_comb = obs.unsqueeze(-1) * delta_comb + imp.unsqueeze(-1) * delta_hat
+        if learned_magnitude is not None:
+            learned_magnitude = obs * learned_magnitude + imp * delta_hat.norm(dim=-1)
+        coherence = coherence * obs
+
         # --- treated z ON THE SPHERE -------------------------------------
         # The co-embedding is L2-normalized (lives on a unit hypersphere), so the
         # ONLY biologically meaningful movement is angular (it changes a protein's
@@ -624,4 +685,5 @@ class NeighborhoodAdapter(nn.Module):
             "sigma2_pred":     sigma2_pred,
             "sigma2_raw":      sigma2_raw,
             "alpha":           alpha,
+            "delta_status":    delta_status,
         }
